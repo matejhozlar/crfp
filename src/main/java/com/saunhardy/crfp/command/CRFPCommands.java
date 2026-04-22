@@ -1,5 +1,7 @@
 package com.saunhardy.crfp.command;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -211,7 +213,7 @@ public final class CRFPCommands {
         src.sendSuccess(() -> Component.literal("Last " + lines.size() + " event(s):").withStyle(ChatFormatting.YELLOW), false);
         for (String raw : lines) {
             try {
-                com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(raw).getAsJsonObject();
+                JsonObject o = JsonParser.parseString(raw).getAsJsonObject();
                 String ts = o.has("timestamp") ? o.get("timestamp").getAsString() : "?";
                 String event = o.has("event") ? o.get("event").getAsString() : "?";
                 String name = o.has("name") ? o.get("name").getAsString() : "?";

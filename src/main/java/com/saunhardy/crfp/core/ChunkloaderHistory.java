@@ -14,10 +14,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * Append-only JSONL audit log for every chunkloader lifecycle event.
@@ -25,6 +27,9 @@ import java.util.function.Consumer;
  * Intended for after-the-fact questions like "who set up that loader I just found three
  * months ago, and what reason did they give?" or "how long did that witch farm actually
  * run last weekend?". One line per event, grep-friendly, never rewritten in place.
+ *
+ * Writes use a literal "\n" terminator so the file is portable between OSes — if the
+ * world folder is ever moved between Windows and Linux, lines stay parseable.
  */
 public final class ChunkloaderHistory {
     public static final String FILENAME = "crfp_history.jsonl";
@@ -57,10 +62,6 @@ public final class ChunkloaderHistory {
         append("expire", c, null, o -> o.addProperty("elapsedMs", elapsed(c)));
     }
 
-    public void logRestore(Chunkloader c) {
-        append("restore", c, null, o -> o.addProperty("remainingMs", c.remainingMs()));
-    }
-
     private void append(String event, Chunkloader c, @Nullable String executor, @Nullable Consumer<JsonObject> extra) {
         JsonObject o = new JsonObject();
         o.addProperty("timestamp", Instant.now().toString());
@@ -78,7 +79,7 @@ public final class ChunkloaderHistory {
 
         try {
             Files.createDirectories(file.getParent());
-            Files.writeString(file, GSON.toJson(o) + System.lineSeparator(),
+            Files.writeString(file, GSON.toJson(o) + "\n",
                     StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
@@ -86,16 +87,25 @@ public final class ChunkloaderHistory {
         }
     }
 
-    /** Returns the last {@code limit} history lines, newest last. */
+    /**
+     * Returns the last {@code limit} history lines, newest last.
+     *
+     * Streaming ring-buffer read: keeps memory use at O(limit) and disk IO at O(file size)
+     * single-pass, so this scales to history files of arbitrary length without the
+     * readAllLines spike that a naive implementation hits on long-running servers.
+     */
     public List<String> tail(int limit) {
         if (limit <= 0 || !Files.exists(file)) return List.of();
-        try {
-            List<String> all = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (all.size() <= limit) return all;
-            return new ArrayList<>(all.subList(all.size() - limit, all.size()));
+        try (Stream<String> stream = Files.lines(file, StandardCharsets.UTF_8)) {
+            Deque<String> ring = new ArrayDeque<>(limit);
+            stream.forEach(line -> {
+                if (ring.size() == limit) ring.pollFirst();
+                ring.addLast(line);
+            });
+            return new ArrayList<>(ring);
         } catch (IOException e) {
             CRFP.LOGGER.warn("Failed to read history file: {}", e.toString());
-            return Collections.emptyList();
+            return List.of();
         }
     }
 

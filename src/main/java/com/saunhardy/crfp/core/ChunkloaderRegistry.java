@@ -87,7 +87,6 @@ public final class ChunkloaderRegistry {
             }
             byName.put(key(c.name()), c);
             managedFakeNames.add(c.name());
-            history.logRestore(c);
         }
         CRFP.LOGGER.info("Restored {} chunkloader(s)", byName.size());
     }
@@ -166,16 +165,15 @@ public final class ChunkloaderRegistry {
 
     /** Admin-initiated removal. Logs a 'remove' event with the executor. */
     public boolean remove(String name, @Nullable String executor) {
-        Chunkloader c = byName.get(key(name));
-        if (c == null) return false;
-        history.logRemove(c, executor);
-        return doRemove(name);
-    }
-
-    /** Does the actual cleanup without logging to history. */
-    private boolean doRemove(String name) {
         Chunkloader c = byName.remove(key(name));
         if (c == null) return false;
+        history.logRemove(c, executor);
+        cleanupRemoved(c);
+        return true;
+    }
+
+    /** Internal cleanup for a Chunkloader already pulled from byName. */
+    private void cleanupRemoved(Chunkloader c) {
         try {
             CRFPFakePlayer fp = c.fakePlayer();
             // removeFromWorld triggers the vanilla "left the game" broadcast — keep the
@@ -186,7 +184,6 @@ public final class ChunkloaderRegistry {
             managedFakeNames.remove(c.name());
             saveQuietly();
         }
-        return true;
     }
 
     public record ExtendResult(boolean found, long actuallyAddedMs, long newRemainingMs, boolean capped) {
@@ -231,7 +228,8 @@ public final class ChunkloaderRegistry {
                 CRFP.LOGGER.info("Chunkloader '{}' expired", c.name());
                 history.logExpire(c);
                 notifyExpired(c);
-                doRemove(c.name());
+                byName.remove(key(c.name()));
+                cleanupRemoved(c);
             }
         }
     }

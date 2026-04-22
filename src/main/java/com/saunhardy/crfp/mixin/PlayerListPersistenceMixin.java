@@ -4,6 +4,7 @@ import com.saunhardy.crfp.fakeplayer.CRFPFakePlayer;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
+import net.minecraft.world.level.GameType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -31,22 +32,23 @@ public abstract class PlayerListPersistenceMixin {
 
     @Inject(method = "save(Lnet/minecraft/server/level/ServerPlayer;)V",
             at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
+            cancellable = true)
     private void crfp$skipSave(ServerPlayer player, CallbackInfo ci) {
         if (player instanceof CRFPFakePlayer) ci.cancel();
     }
 
     @Inject(method = "load(Lnet/minecraft/server/level/ServerPlayer;)Lnet/minecraft/nbt/CompoundTag;",
             at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
+            cancellable = true)
     private void crfp$skipLoad(ServerPlayer player, CallbackInfoReturnable<CompoundTag> cir) {
         if (player instanceof CRFPFakePlayer) {
             CompoundTag tag = new CompoundTag();
             tag.putString("Dimension", player.serverLevel().dimension().location().toString());
-            tag.putString("playerGameType", "survival");
-            tag.putString("previousPlayerGameType", "survival");
+            // Vanilla's readPlayerMode uses tag.getInt(...) + GameType.byId(...), so the int
+            // form matches the on-disk format exactly. A string value would fail the numeric
+            // type check and fall back to the server default gamemode.
+            tag.putInt("playerGameType", GameType.SURVIVAL.getId());
+            tag.putInt("previousPlayerGameType", GameType.SURVIVAL.getId());
             cir.setReturnValue(tag);
         }
     }

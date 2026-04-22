@@ -28,16 +28,14 @@ public abstract class ServerCommonSendMixin {
 
     @Inject(method = "send(Lnet/minecraft/network/protocol/Packet;)V",
             at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
+            cancellable = true)
     private void crfp$dropForFake(Packet<?> packet, CallbackInfo ci) {
         if (connection instanceof DummyConnection) ci.cancel();
     }
 
     @Inject(method = "send(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketSendListener;)V",
             at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
+            cancellable = true)
     private void crfp$dropForFake(Packet<?> packet, PacketSendListener listener, CallbackInfo ci) {
         if (connection instanceof DummyConnection) ci.cancel();
     }

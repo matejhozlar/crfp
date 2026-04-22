@@ -10,8 +10,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.UUID;
-
 /**
  * Suppresses the vanilla "X joined the game" / "X left the game" chat broadcasts when
  * X is one of our managed fake players. Everything else about the join/leave flow
@@ -22,17 +20,8 @@ public abstract class PlayerListBroadcastMixin {
 
     @Inject(method = "broadcastSystemMessage(Lnet/minecraft/network/chat/Component;Z)V",
             at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
+            cancellable = true)
     private void crfp$suppressJoinLeave(Component message, boolean overlay, CallbackInfo ci) {
-        if (shouldSuppress(message)) ci.cancel();
-    }
-
-    @Inject(method = "broadcastSystemMessage(Lnet/minecraft/network/chat/Component;Ljava/util/UUID;)V",
-            at = @At("HEAD"),
-            cancellable = true,
-            require = 0)
-    private void crfp$suppressJoinLeave(Component message, UUID sender, CallbackInfo ci) {
         if (shouldSuppress(message)) ci.cancel();
     }
 
