@@ -201,6 +201,7 @@ public final class ChunkloaderRegistry {
         if (expired != null) {
             for (Chunkloader c : expired) {
                 CRFP.LOGGER.info("Chunkloader '{}' expired", c.name());
+                notifyExpired(c);
                 remove(c.name());
             }
         }
@@ -213,6 +214,16 @@ public final class ChunkloaderRegistry {
         creator.displayClientMessage(
                 Component.literal("Chunkloader '" + c.name() + "' expires in " + secs + "s"),
                 true);
+    }
+
+    private void notifyExpired(Chunkloader c) {
+        ServerPlayer creator = server.getPlayerList().getPlayer(c.creatorUuid());
+        if (creator == null) return;
+        String reasonSuffix = c.reason().isEmpty() ? "" : " (" + c.reason() + ")";
+        Component msg = Component.literal("Chunkloader ").withStyle(net.minecraft.ChatFormatting.GRAY)
+                .append(Component.literal(c.name()).withStyle(net.minecraft.ChatFormatting.AQUA))
+                .append(Component.literal(reasonSuffix + " has expired").withStyle(net.minecraft.ChatFormatting.GRAY));
+        creator.sendSystemMessage(msg);
     }
 
     // ---------- placement ----------
