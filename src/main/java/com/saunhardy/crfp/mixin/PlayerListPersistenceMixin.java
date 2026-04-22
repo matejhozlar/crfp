@@ -11,6 +11,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.Optional;
+
 /**
  * Skip vanilla playerdata IO for fake players. We have our own JSON persistence,
  * and letting vanilla write per-loader dat files has two downsides:
@@ -37,10 +39,12 @@ public abstract class PlayerListPersistenceMixin {
         if (player instanceof CRFPFakePlayer) ci.cancel();
     }
 
-    @Inject(method = "load(Lnet/minecraft/server/level/ServerPlayer;)Lnet/minecraft/nbt/CompoundTag;",
+    // NeoForge 1.21.1 patched PlayerList#load to return Optional<CompoundTag> (vanilla
+    // returned CompoundTag directly). placeNewPlayer calls Optional#flatMap on the result.
+    @Inject(method = "load(Lnet/minecraft/server/level/ServerPlayer;)Ljava/util/Optional;",
             at = @At("HEAD"),
             cancellable = true)
-    private void crfp$skipLoad(ServerPlayer player, CallbackInfoReturnable<CompoundTag> cir) {
+    private void crfp$skipLoad(ServerPlayer player, CallbackInfoReturnable<Optional<CompoundTag>> cir) {
         if (player instanceof CRFPFakePlayer) {
             CompoundTag tag = new CompoundTag();
             tag.putString("Dimension", player.serverLevel().dimension().location().toString());
@@ -49,7 +53,7 @@ public abstract class PlayerListPersistenceMixin {
             // type check and fall back to the server default gamemode.
             tag.putInt("playerGameType", GameType.SURVIVAL.getId());
             tag.putInt("previousPlayerGameType", GameType.SURVIVAL.getId());
-            cir.setReturnValue(tag);
+            cir.setReturnValue(Optional.of(tag));
         }
     }
 }
