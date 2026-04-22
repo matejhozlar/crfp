@@ -90,6 +90,12 @@ public final class ChunkloaderPersistence {
         o.addProperty("creatorName", c.creatorName());
         o.addProperty("createdAtEpochMs", c.createdAtEpochMs());
         o.addProperty("remainingMs", c.remainingMs());
+        if (c.skinValue() != null) {
+            o.addProperty("skinValue", c.skinValue());
+            if (c.skinSignature() != null) {
+                o.addProperty("skinSignature", c.skinSignature());
+            }
+        }
         return o;
     }
 
@@ -104,6 +110,9 @@ public final class ChunkloaderPersistence {
         String creatorName = o.get("creatorName").getAsString();
         long createdAt = o.get("createdAtEpochMs").getAsLong();
         long remaining = o.get("remainingMs").getAsLong();
-        return new Chunkloader(uuid, name, reason, dimension, pos, creatorUuid, creatorName, createdAt, remaining);
+        String skinValue = o.has("skinValue") ? o.get("skinValue").getAsString() : null;
+        String skinSignature = o.has("skinSignature") ? o.get("skinSignature").getAsString() : null;
+        return new Chunkloader(uuid, name, reason, dimension, pos, creatorUuid, creatorName,
+                createdAt, remaining, skinValue, skinSignature);
     }
 }

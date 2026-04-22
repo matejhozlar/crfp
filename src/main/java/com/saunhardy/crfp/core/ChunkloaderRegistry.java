@@ -1,6 +1,7 @@
 package com.saunhardy.crfp.core;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
 import com.saunhardy.crfp.CRFP;
 import com.saunhardy.crfp.Config;
 import com.saunhardy.crfp.fakeplayer.CRFPFakePlayer;
@@ -120,10 +121,16 @@ public final class ChunkloaderRegistry {
 
         UUID uuid = offlineUuid(name);
         long now = System.currentTimeMillis();
+
+        Property skin = creator.getGameProfile().getProperties().get("textures").stream().findFirst().orElse(null);
+        String skinValue = skin != null ? skin.value() : null;
+        String skinSignature = skin != null ? skin.signature() : null;
+
         Chunkloader c = new Chunkloader(
                 uuid, name, reason == null ? "" : reason, dim, pos,
                 creator.getUUID(), creator.getGameProfile().getName(),
-                now, minutes * 60_000L
+                now, minutes * 60_000L,
+                skinValue, skinSignature
         );
 
         if (!placeLoader(c)) {
@@ -201,6 +208,9 @@ public final class ChunkloaderRegistry {
             return false;
         }
         GameProfile profile = new GameProfile(c.uuid(), c.name());
+        if (c.skinValue() != null) {
+            profile.getProperties().put("textures", new Property("textures", c.skinValue(), c.skinSignature()));
+        }
         CRFPFakePlayer fp = new CRFPFakePlayer(level, profile);
         fp.moveTo(c.pos().getX() + 0.5, c.pos().getY(), c.pos().getZ() + 0.5, 0f, 0f);
 
