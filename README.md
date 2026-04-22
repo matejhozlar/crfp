@@ -31,12 +31,3 @@ All require OP level 2 by default (configurable).
 - `warnBeforeExpirySeconds` — action-bar warning lead time. Default 30.
 - `permissionLevel` — OP level required for `/crfp`. Default 2.
 
-## Requirements
-
-- Minecraft 1.21.1
-- NeoForge 21.1.222 or newer
-- Server-side only — **do not install on the client**
-
-## License
-
-See `LICENSE`.
