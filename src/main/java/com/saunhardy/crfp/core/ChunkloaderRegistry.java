@@ -127,15 +127,18 @@ public final class ChunkloaderRegistry {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
 
+        ServerLevel level = creator.serverLevel();
+        BlockPos pos = creator.blockPosition();
+        if (pos.getY() < level.getMinBuildHeight()) {
+            return AddResult.fail("Cannot place a chunkloader below the world (Y=" + pos.getY() + ")");
+        }
+        String dim = level.dimension().location().toString();
+
         int slot = nextAvailableSlot();
         if (slot < 0) {
             return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
         }
         String name = NAME_PREFIX + slot;
-
-        ServerLevel level = creator.serverLevel();
-        BlockPos pos = creator.blockPosition();
-        String dim = level.dimension().location().toString();
 
         UUID uuid = offlineUuid(name);
         long now = System.currentTimeMillis();
@@ -186,17 +189,22 @@ public final class ChunkloaderRegistry {
         return true;
     }
 
-    public boolean extend(String name, long addMinutes, @Nullable String executor) {
+    public record ExtendResult(boolean found, long actuallyAddedMs, long newRemainingMs, boolean capped) {
+        public static ExtendResult notFound() { return new ExtendResult(false, 0, 0, false); }
+    }
+
+    public ExtendResult extend(String name, long addMinutes, @Nullable String executor) {
         Chunkloader c = byName.get(key(name));
-        if (c == null) return false;
+        if (c == null) return ExtendResult.notFound();
         long maxMs = Config.MAX_DURATION_MINUTES.get() * 60_000L;
-        long addMs = addMinutes * 60_000L;
-        long newRemaining = Math.min(c.remainingMs() + addMs, maxMs);
+        long requestedMs = addMinutes * 60_000L;
+        long newRemaining = Math.min(c.remainingMs() + requestedMs, maxMs);
         long actuallyAdded = newRemaining - c.remainingMs();
+        boolean capped = actuallyAdded < requestedMs;
         c.setRemainingMs(newRemaining);
         saveQuietly();
         history.logExtend(c, actuallyAdded, newRemaining, executor);
-        return true;
+        return new ExtendResult(true, actuallyAdded, newRemaining, capped);
     }
 
     // ---------- tick ----------

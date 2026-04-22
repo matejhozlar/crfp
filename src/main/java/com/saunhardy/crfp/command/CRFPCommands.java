@@ -155,10 +155,14 @@ public final class CRFPCommands {
         String name = StringArgumentType.getString(ctx, "name");
         int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
 
-        if (!reg.extend(name, minutes, src.getTextName())) throw ERR_NOT_FOUND.create();
-        Chunkloader c = reg.get(name);
-        long remain = c != null ? c.remainingMs() : 0;
-        src.sendSuccess(() -> Component.literal("Extended '" + name + "' · now " + formatDuration(remain) + " left").withStyle(ChatFormatting.GREEN), true);
+        ChunkloaderRegistry.ExtendResult r = reg.extend(name, minutes, src.getTextName());
+        if (!r.found()) throw ERR_NOT_FOUND.create();
+
+        String addedStr = formatDuration(r.actuallyAddedMs());
+        String remainStr = formatDuration(r.newRemainingMs());
+        String cappedHint = r.capped() ? " (capped at 24h max)" : "";
+        src.sendSuccess(() -> Component.literal("Extended '" + name + "' by " + addedStr + cappedHint
+                + " · now " + remainStr + " left").withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
 

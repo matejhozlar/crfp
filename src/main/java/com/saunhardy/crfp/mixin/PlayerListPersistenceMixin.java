@@ -18,6 +18,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *   2. On restore, the reload reads stale NBT (modded capabilities, saved abilities,
  *      old position) and silently overrides the defaults set in CRFPFakePlayer's
  *      constructor. Cleaner to skip the round-trip entirely.
+ *
+ * Rather than returning null from load, we hand back a minimal CompoundTag that just
+ * pins the dimension and gamemode to what the constructor set. PlayerList#placeNewPlayer
+ * reads Dimension from the tag to decide which ServerLevel to put the player into —
+ * returning null would default that to overworld even when the creator ran /crfp add
+ * in the nether or end. Encoding our target dim here keeps the placement path
+ * dimension-correct from the first tick.
  */
 @Mixin(PlayerList.class)
 public abstract class PlayerListPersistenceMixin {
@@ -35,6 +42,12 @@ public abstract class PlayerListPersistenceMixin {
             cancellable = true,
             require = 0)
     private void crfp$skipLoad(ServerPlayer player, CallbackInfoReturnable<CompoundTag> cir) {
-        if (player instanceof CRFPFakePlayer) cir.setReturnValue(null);
+        if (player instanceof CRFPFakePlayer) {
+            CompoundTag tag = new CompoundTag();
+            tag.putString("Dimension", player.serverLevel().dimension().location().toString());
+            tag.putString("playerGameType", "survival");
+            tag.putString("previousPlayerGameType", "survival");
+            cir.setReturnValue(tag);
+        }
     }
 }
