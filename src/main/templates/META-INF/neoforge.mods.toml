@@ -1,0 +1,34 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="saunhardy"
+description='''
+Server-side fake-player chunkloader for Createrington. Admin-only commands spawn
+timer-bound fake players that keep chunks loaded the way a real player would, with
+full support for mob spawning, random ticks, and simulation distance. Hard cap of
+24 hours per loader; timers pause while the server is offline.
+'''
+# Accept vanilla clients: nothing in this mod is client-facing.
+displayTest="IGNORE_ALL_VERSION"
+
+[[mixins]]
+config="${mod_id}.mixins.json"
+
+[[dependencies.${mod_id}]]
+modId="neoforge"
+type="required"
+versionRange="[${neo_version},)"
+ordering="NONE"
+side="SERVER"
+
+[[dependencies.${mod_id}]]
+modId="minecraft"
+type="required"
+versionRange="${minecraft_version_range}"
+ordering="NONE"
+side="SERVER"
