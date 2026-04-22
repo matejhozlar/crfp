@@ -2,13 +2,11 @@ package com.saunhardy.crfp.fakeplayer;
 
 import com.mojang.authlib.GameProfile;
 import com.saunhardy.crfp.CRFP;
-import com.saunhardy.crfp.core.Chunkloader;
 import com.saunhardy.crfp.core.ChunkloaderRegistry;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.CommonListenerCookie;
@@ -145,17 +143,8 @@ public final class CRFPFakePlayer extends FakePlayer {
     public @Nullable Component getTabListDisplayName() {
         int slot = ChunkloaderRegistry.slotOf(getGameProfile().getName());
         String displayNumber = slot > 0 ? "#" + slot : getGameProfile().getName();
-        MutableComponent line = Component.literal("[CRFP] ").withStyle(ChatFormatting.DARK_AQUA)
+        return Component.literal("[CRFP] ").withStyle(ChatFormatting.DARK_AQUA)
                 .append(Component.literal("Createrington" + displayNumber).withStyle(ChatFormatting.GRAY));
-
-        ChunkloaderRegistry reg = CRFP.registry();
-        if (reg != null) {
-            Chunkloader c = reg.get(getGameProfile().getName());
-            if (c != null && !c.reason().isEmpty()) {
-                line.append(Component.literal(" · " + c.reason()).withStyle(ChatFormatting.DARK_GRAY));
-            }
-        }
-        return line;
     }
 
     public void killSilently() {
