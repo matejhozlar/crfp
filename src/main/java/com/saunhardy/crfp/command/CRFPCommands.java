@@ -64,6 +64,11 @@ public final class CRFPCommands {
                         .suggests((ctx, b) -> SharedSuggestionProvider.suggest(activeNames(), b))
                         .executes(CRFPCommands::doInfo)));
 
+        root.then(Commands.literal("history")
+                .executes(ctx -> doHistory(ctx, 10))
+                .then(Commands.argument("limit", IntegerArgumentType.integer(1, 100))
+                        .executes(ctx -> doHistory(ctx, IntegerArgumentType.getInteger(ctx, "limit")))));
+
         dispatcher.register(root);
     }
 
@@ -137,7 +142,7 @@ public final class CRFPCommands {
         ChunkloaderRegistry reg = requireRegistry();
         String name = StringArgumentType.getString(ctx, "name");
 
-        if (!reg.remove(name)) throw ERR_NOT_FOUND.create();
+        if (!reg.remove(name, src.getTextName())) throw ERR_NOT_FOUND.create();
         src.sendSuccess(() -> Component.literal("Removed chunkloader '" + name + "'").withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
@@ -150,7 +155,7 @@ public final class CRFPCommands {
         String name = StringArgumentType.getString(ctx, "name");
         int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
 
-        if (!reg.extend(name, minutes)) throw ERR_NOT_FOUND.create();
+        if (!reg.extend(name, minutes, src.getTextName())) throw ERR_NOT_FOUND.create();
         Chunkloader c = reg.get(name);
         long remain = c != null ? c.remainingMs() : 0;
         src.sendSuccess(() -> Component.literal("Extended '" + name + "' · now " + formatDuration(remain) + " left").withStyle(ChatFormatting.GREEN), true);
@@ -187,6 +192,53 @@ public final class CRFPCommands {
     private static String shortDim(String dim) {
         int i = dim.indexOf(':');
         return i >= 0 ? dim.substring(i + 1) : dim;
+    }
+
+    // ---------- history ----------
+
+    private static int doHistory(CommandContext<CommandSourceStack> ctx, int limit) throws CommandSyntaxException {
+        CommandSourceStack src = ctx.getSource();
+        ChunkloaderRegistry reg = requireRegistry();
+        java.util.List<String> lines = reg.history().tail(limit);
+        if (lines.isEmpty()) {
+            src.sendSuccess(() -> Component.literal("No history yet").withStyle(ChatFormatting.GRAY), false);
+            return 0;
+        }
+        src.sendSuccess(() -> Component.literal("Last " + lines.size() + " event(s):").withStyle(ChatFormatting.YELLOW), false);
+        for (String raw : lines) {
+            try {
+                com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(raw).getAsJsonObject();
+                String ts = o.has("timestamp") ? o.get("timestamp").getAsString() : "?";
+                String event = o.has("event") ? o.get("event").getAsString() : "?";
+                String name = o.has("name") ? o.get("name").getAsString() : "?";
+                String creator = o.has("creator") ? o.get("creator").getAsString() : "?";
+                String reason = o.has("reason") ? " · " + o.get("reason").getAsString() : "";
+                String executor = o.has("executor") ? " by " + o.get("executor").getAsString() : "";
+
+                ChatFormatting eventColor = switch (event) {
+                    case "create" -> ChatFormatting.GREEN;
+                    case "extend" -> ChatFormatting.BLUE;
+                    case "expire" -> ChatFormatting.GOLD;
+                    case "remove" -> ChatFormatting.RED;
+                    case "restore" -> ChatFormatting.DARK_AQUA;
+                    default -> ChatFormatting.WHITE;
+                };
+                MutableComponent line = Component.literal("  " + shortTs(ts) + " ").withStyle(ChatFormatting.DARK_GRAY)
+                        .append(Component.literal(event).withStyle(eventColor))
+                        .append(Component.literal(" " + name + " ").withStyle(ChatFormatting.AQUA))
+                        .append(Component.literal("by " + creator + executor + reason).withStyle(ChatFormatting.GRAY));
+                src.sendSuccess(() -> line, false);
+            } catch (Exception e) {
+                src.sendSuccess(() -> Component.literal("  (unparseable) " + raw).withStyle(ChatFormatting.DARK_RED), false);
+            }
+        }
+        return lines.size();
+    }
+
+    private static String shortTs(String iso) {
+        // 2026-04-22T09:57:50.123Z -> 04-22 09:57:50
+        if (iso.length() < 19) return iso;
+        return iso.substring(5, 10) + " " + iso.substring(11, 19);
     }
 
     private static String formatDuration(long ms) {

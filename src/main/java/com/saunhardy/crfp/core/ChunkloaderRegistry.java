@@ -33,11 +33,13 @@ public final class ChunkloaderRegistry {
     private static final Pattern SLOT_PATTERN = Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$");
 
     private final MinecraftServer server;
+    private final ChunkloaderHistory history;
     private final ConcurrentHashMap<String, Chunkloader> byName = new ConcurrentHashMap<>();
     private final Set<String> managedFakeNames = ConcurrentHashMap.newKeySet();
 
     public ChunkloaderRegistry(MinecraftServer server) {
         this.server = server;
+        this.history = new ChunkloaderHistory(server);
     }
 
     public static boolean isValidName(String name) {
@@ -65,6 +67,10 @@ public final class ChunkloaderRegistry {
         return byName.values();
     }
 
+    public ChunkloaderHistory history() {
+        return history;
+    }
+
     // ---------- lifecycle ----------
 
     public void load() {
@@ -81,6 +87,7 @@ public final class ChunkloaderRegistry {
             }
             byName.put(key(c.name()), c);
             managedFakeNames.add(c.name());
+            history.logRestore(c);
         }
         CRFP.LOGGER.info("Restored {} chunkloader(s)", byName.size());
     }
@@ -150,10 +157,20 @@ public final class ChunkloaderRegistry {
         byName.put(key(name), c);
         managedFakeNames.add(name);
         saveQuietly();
+        history.logCreate(c, minutes * 60_000L);
         return AddResult.ok(c);
     }
 
-    public boolean remove(String name) {
+    /** Admin-initiated removal. Logs a 'remove' event with the executor. */
+    public boolean remove(String name, @Nullable String executor) {
+        Chunkloader c = byName.get(key(name));
+        if (c == null) return false;
+        history.logRemove(c, executor);
+        return doRemove(name);
+    }
+
+    /** Does the actual cleanup without logging to history. */
+    private boolean doRemove(String name) {
         Chunkloader c = byName.remove(key(name));
         if (c == null) return false;
         try {
@@ -169,13 +186,16 @@ public final class ChunkloaderRegistry {
         return true;
     }
 
-    public boolean extend(String name, long addMinutes) {
+    public boolean extend(String name, long addMinutes, @Nullable String executor) {
         Chunkloader c = byName.get(key(name));
         if (c == null) return false;
         long maxMs = Config.MAX_DURATION_MINUTES.get() * 60_000L;
-        long newRemaining = Math.min(c.remainingMs() + addMinutes * 60_000L, maxMs);
+        long addMs = addMinutes * 60_000L;
+        long newRemaining = Math.min(c.remainingMs() + addMs, maxMs);
+        long actuallyAdded = newRemaining - c.remainingMs();
         c.setRemainingMs(newRemaining);
         saveQuietly();
+        history.logExtend(c, actuallyAdded, newRemaining, executor);
         return true;
     }
 
@@ -201,8 +221,9 @@ public final class ChunkloaderRegistry {
         if (expired != null) {
             for (Chunkloader c : expired) {
                 CRFP.LOGGER.info("Chunkloader '{}' expired", c.name());
+                history.logExpire(c);
                 notifyExpired(c);
-                remove(c.name());
+                doRemove(c.name());
             }
         }
     }
