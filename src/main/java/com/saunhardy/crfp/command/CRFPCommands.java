@@ -40,11 +40,10 @@ public final class CRFPCommands {
                 .requires(src -> src.hasPermission(Config.PERMISSION_LEVEL.get()));
 
         root.then(Commands.literal("add")
-                .then(Commands.argument("name", StringArgumentType.word())
-                        .then(Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
-                                .executes(ctx -> doAdd(ctx, ""))
-                                .then(Commands.argument("reason", StringArgumentType.greedyString())
-                                        .executes(ctx -> doAdd(ctx, StringArgumentType.getString(ctx, "reason")))))));
+                .then(Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
+                        .executes(ctx -> doAdd(ctx, ""))
+                        .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                .executes(ctx -> doAdd(ctx, StringArgumentType.getString(ctx, "reason"))))));
 
         root.then(Commands.literal("list")
                 .executes(CRFPCommands::doList));
@@ -88,10 +87,9 @@ public final class CRFPCommands {
         if (player == null) throw ERR_NOT_PLAYER.create();
 
         ChunkloaderRegistry reg = requireRegistry();
-        String name = StringArgumentType.getString(ctx, "name");
         int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
 
-        ChunkloaderRegistry.AddResult result = reg.add(name, minutes, reason, player);
+        ChunkloaderRegistry.AddResult result = reg.add(minutes, reason, player);
         if (!result.success) {
             src.sendFailure(Component.literal(result.message));
             return 0;

@@ -27,7 +27,10 @@ import java.util.regex.Pattern;
 
 public final class ChunkloaderRegistry {
     public static final int TICK_INTERVAL_MS = 50;
+    public static final String NAME_PREFIX = "Createrington_";
+    public static final int MAX_SLOT = 99; // "Createrington_99" is 16 chars, the Mojang limit
     private static final Pattern NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
+    private static final Pattern SLOT_PATTERN = Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$");
 
     private final MinecraftServer server;
     private final ConcurrentHashMap<String, Chunkloader> byName = new ConcurrentHashMap<>();
@@ -39,6 +42,14 @@ public final class ChunkloaderRegistry {
 
     public static boolean isValidName(String name) {
         return name != null && NAME_PATTERN.matcher(name).matches();
+    }
+
+    /** Parses the numeric slot out of a loader name, or returns -1 if it doesn't match the scheme. */
+    public static int slotOf(String name) {
+        if (name == null) return -1;
+        var m = SLOT_PATTERN.matcher(name);
+        if (!m.matches()) return -1;
+        try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException e) { return -1; }
     }
 
     /** Whether the given in-game player name is currently one of our managed fake players. */
@@ -103,17 +114,17 @@ public final class ChunkloaderRegistry {
         public static AddResult fail(String m) { return new AddResult(false, m, null); }
     }
 
-    public AddResult add(String name, long minutes, String reason, ServerPlayer creator) {
-        if (!isValidName(name)) {
-            return AddResult.fail("Name must be 3-16 chars, [A-Za-z0-9_] only");
-        }
+    public AddResult add(long minutes, String reason, ServerPlayer creator) {
         int maxMin = Config.MAX_DURATION_MINUTES.get();
         if (minutes < 1 || minutes > maxMin) {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
-        if (byName.containsKey(key(name))) {
-            return AddResult.fail("A chunkloader named '" + name + "' already exists");
+
+        int slot = nextAvailableSlot();
+        if (slot < 0) {
+            return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
         }
+        String name = NAME_PREFIX + slot;
 
         ServerLevel level = creator.serverLevel();
         BlockPos pos = creator.blockPosition();
@@ -246,5 +257,18 @@ public final class ChunkloaderRegistry {
 
     private static String key(String name) {
         return name.toLowerCase(Locale.ROOT);
+    }
+
+    /** Returns the smallest unused slot in [1, MAX_SLOT], or -1 if all are taken. */
+    private int nextAvailableSlot() {
+        Set<Integer> used = new java.util.HashSet<>();
+        for (Chunkloader c : byName.values()) {
+            int s = slotOf(c.name());
+            if (s > 0) used.add(s);
+        }
+        for (int i = 1; i <= MAX_SLOT; i++) {
+            if (!used.contains(i)) return i;
+        }
+        return -1;
     }
 }

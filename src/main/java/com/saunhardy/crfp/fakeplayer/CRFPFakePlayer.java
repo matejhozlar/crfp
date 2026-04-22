@@ -2,8 +2,12 @@ package com.saunhardy.crfp.fakeplayer;
 
 import com.mojang.authlib.GameProfile;
 import com.saunhardy.crfp.CRFP;
+import com.saunhardy.crfp.core.Chunkloader;
+import com.saunhardy.crfp.core.ChunkloaderRegistry;
+import net.minecraft.ChatFormatting;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.CommonListenerCookie;
@@ -13,6 +17,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A {@link FakePlayer} that is actually placed into the player list so the chunk manager
@@ -117,6 +122,23 @@ public final class CRFPFakePlayer extends FakePlayer {
     @Override
     public boolean isCreative() {
         return false;
+    }
+
+    @Override
+    public @Nullable Component getTabListDisplayName() {
+        int slot = ChunkloaderRegistry.slotOf(getGameProfile().getName());
+        String displayNumber = slot > 0 ? "#" + slot : getGameProfile().getName();
+        MutableComponent line = Component.literal("[CRFP] ").withStyle(ChatFormatting.DARK_AQUA)
+                .append(Component.literal("Createrington" + displayNumber).withStyle(ChatFormatting.GRAY));
+
+        ChunkloaderRegistry reg = CRFP.registry();
+        if (reg != null) {
+            Chunkloader c = reg.get(getGameProfile().getName());
+            if (c != null && !c.reason().isEmpty()) {
+                line.append(Component.literal(" · " + c.reason()).withStyle(ChatFormatting.DARK_GRAY));
+            }
+        }
+        return line;
     }
 
     public void killSilently() {
