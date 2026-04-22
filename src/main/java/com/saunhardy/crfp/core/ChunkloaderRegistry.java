@@ -145,11 +145,16 @@ public final class ChunkloaderRegistry {
     public boolean remove(String name) {
         Chunkloader c = byName.remove(key(name));
         if (c == null) return false;
-        managedFakeNames.remove(c.name());
-        CRFPFakePlayer fp = c.fakePlayer();
-        if (fp != null) fp.removeFromWorld();
-        c.detach();
-        saveQuietly();
+        try {
+            CRFPFakePlayer fp = c.fakePlayer();
+            // removeFromWorld triggers the vanilla "left the game" broadcast — keep the
+            // name in managedFakeNames until after it fires so the mixin can suppress it.
+            if (fp != null) fp.removeFromWorld();
+            c.detach();
+        } finally {
+            managedFakeNames.remove(c.name());
+            saveQuietly();
+        }
         return true;
     }
 

@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -61,6 +62,7 @@ public final class ChunkloaderPersistence {
 
     public static void save(MinecraftServer server, List<Chunkloader> loaders) {
         Path file = resolveFile(server);
+        Path tmp = file.resolveSibling(FILENAME + ".tmp");
         try {
             Files.createDirectories(file.getParent());
             JsonArray arr = new JsonArray();
@@ -69,9 +71,16 @@ public final class ChunkloaderPersistence {
             }
             JsonObject root = new JsonObject();
             root.add("loaders", arr);
-            Files.writeString(file, GSON.toJson(root), StandardCharsets.UTF_8);
+            Files.writeString(tmp, GSON.toJson(root), StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException atomicFailed) {
+                // Some filesystems (e.g. across FS boundaries) don't support ATOMIC_MOVE.
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             CRFP.LOGGER.error("Failed to write {}: {}", file, e.toString());
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
         }
     }
 
