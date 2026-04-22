@@ -4,7 +4,9 @@
   "package": "com.saunhardy.crfp.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "PlayerListBroadcastMixin"
+    "PlayerListBroadcastMixin",
+    "PlayerListPersistenceMixin",
+    "ServerCommonSendMixin"
   ],
   "injectors": {
     "defaultRequire": 1

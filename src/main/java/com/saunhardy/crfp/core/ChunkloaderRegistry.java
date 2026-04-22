@@ -1,6 +1,7 @@
 package com.saunhardy.crfp.core;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
 import com.saunhardy.crfp.CRFP;
 import com.saunhardy.crfp.Config;
 import com.saunhardy.crfp.fakeplayer.CRFPFakePlayer;
@@ -26,18 +27,31 @@ import java.util.regex.Pattern;
 
 public final class ChunkloaderRegistry {
     public static final int TICK_INTERVAL_MS = 50;
+    public static final String NAME_PREFIX = "Createrington_";
+    public static final int MAX_SLOT = 99; // "Createrington_99" is 16 chars, the Mojang limit
     private static final Pattern NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
+    private static final Pattern SLOT_PATTERN = Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$");
 
     private final MinecraftServer server;
+    private final ChunkloaderHistory history;
     private final ConcurrentHashMap<String, Chunkloader> byName = new ConcurrentHashMap<>();
     private final Set<String> managedFakeNames = ConcurrentHashMap.newKeySet();
 
     public ChunkloaderRegistry(MinecraftServer server) {
         this.server = server;
+        this.history = new ChunkloaderHistory(server);
     }
 
     public static boolean isValidName(String name) {
         return name != null && NAME_PATTERN.matcher(name).matches();
+    }
+
+    /** Parses the numeric slot out of a loader name, or returns -1 if it doesn't match the scheme. */
+    public static int slotOf(String name) {
+        if (name == null) return -1;
+        var m = SLOT_PATTERN.matcher(name);
+        if (!m.matches()) return -1;
+        try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException e) { return -1; }
     }
 
     /** Whether the given in-game player name is currently one of our managed fake players. */
@@ -51,6 +65,10 @@ public final class ChunkloaderRegistry {
 
     public Collection<Chunkloader> all() {
         return byName.values();
+    }
+
+    public ChunkloaderHistory history() {
+        return history;
     }
 
     // ---------- lifecycle ----------
@@ -102,28 +120,37 @@ public final class ChunkloaderRegistry {
         public static AddResult fail(String m) { return new AddResult(false, m, null); }
     }
 
-    public AddResult add(String name, long minutes, String reason, ServerPlayer creator) {
-        if (!isValidName(name)) {
-            return AddResult.fail("Name must be 3-16 chars, [A-Za-z0-9_] only");
-        }
+    public AddResult add(long minutes, String reason, ServerPlayer creator) {
         int maxMin = Config.MAX_DURATION_MINUTES.get();
         if (minutes < 1 || minutes > maxMin) {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
-        if (byName.containsKey(key(name))) {
-            return AddResult.fail("A chunkloader named '" + name + "' already exists");
-        }
 
         ServerLevel level = creator.serverLevel();
         BlockPos pos = creator.blockPosition();
+        if (pos.getY() < level.getMinBuildHeight()) {
+            return AddResult.fail("Cannot place a chunkloader below the world (Y=" + pos.getY() + ")");
+        }
         String dim = level.dimension().location().toString();
+
+        int slot = nextAvailableSlot();
+        if (slot < 0) {
+            return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
+        }
+        String name = NAME_PREFIX + slot;
 
         UUID uuid = offlineUuid(name);
         long now = System.currentTimeMillis();
+
+        Property skin = creator.getGameProfile().getProperties().get("textures").stream().findFirst().orElse(null);
+        String skinValue = skin != null ? skin.value() : null;
+        String skinSignature = skin != null ? skin.signature() : null;
+
         Chunkloader c = new Chunkloader(
                 uuid, name, reason == null ? "" : reason, dim, pos,
                 creator.getUUID(), creator.getGameProfile().getName(),
-                now, minutes * 60_000L
+                now, minutes * 60_000L,
+                skinValue, skinSignature
         );
 
         if (!placeLoader(c)) {
@@ -132,28 +159,49 @@ public final class ChunkloaderRegistry {
         byName.put(key(name), c);
         managedFakeNames.add(name);
         saveQuietly();
+        history.logCreate(c, minutes * 60_000L);
         return AddResult.ok(c);
     }
 
-    public boolean remove(String name) {
+    /** Admin-initiated removal. Logs a 'remove' event with the executor. */
+    public boolean remove(String name, @Nullable String executor) {
         Chunkloader c = byName.remove(key(name));
         if (c == null) return false;
-        managedFakeNames.remove(c.name());
-        CRFPFakePlayer fp = c.fakePlayer();
-        if (fp != null) fp.removeFromWorld();
-        c.detach();
-        saveQuietly();
+        history.logRemove(c, executor);
+        cleanupRemoved(c);
         return true;
     }
 
-    public boolean extend(String name, long addMinutes) {
+    /** Internal cleanup for a Chunkloader already pulled from byName. */
+    private void cleanupRemoved(Chunkloader c) {
+        try {
+            CRFPFakePlayer fp = c.fakePlayer();
+            // removeFromWorld triggers the vanilla "left the game" broadcast — keep the
+            // name in managedFakeNames until after it fires so the mixin can suppress it.
+            if (fp != null) fp.removeFromWorld();
+            c.detach();
+        } finally {
+            managedFakeNames.remove(c.name());
+            saveQuietly();
+        }
+    }
+
+    public record ExtendResult(boolean found, long actuallyAddedMs, long newRemainingMs, boolean capped) {
+        public static ExtendResult notFound() { return new ExtendResult(false, 0, 0, false); }
+    }
+
+    public ExtendResult extend(String name, long addMinutes, @Nullable String executor) {
         Chunkloader c = byName.get(key(name));
-        if (c == null) return false;
+        if (c == null) return ExtendResult.notFound();
         long maxMs = Config.MAX_DURATION_MINUTES.get() * 60_000L;
-        long newRemaining = Math.min(c.remainingMs() + addMinutes * 60_000L, maxMs);
+        long requestedMs = addMinutes * 60_000L;
+        long newRemaining = Math.min(c.remainingMs() + requestedMs, maxMs);
+        long actuallyAdded = newRemaining - c.remainingMs();
+        boolean capped = actuallyAdded < requestedMs;
         c.setRemainingMs(newRemaining);
         saveQuietly();
-        return true;
+        history.logExtend(c, actuallyAdded, newRemaining, executor);
+        return new ExtendResult(true, actuallyAdded, newRemaining, capped);
     }
 
     // ---------- tick ----------
@@ -178,7 +226,10 @@ public final class ChunkloaderRegistry {
         if (expired != null) {
             for (Chunkloader c : expired) {
                 CRFP.LOGGER.info("Chunkloader '{}' expired", c.name());
-                remove(c.name());
+                history.logExpire(c);
+                notifyExpired(c);
+                byName.remove(key(c.name()));
+                cleanupRemoved(c);
             }
         }
     }
@@ -192,6 +243,16 @@ public final class ChunkloaderRegistry {
                 true);
     }
 
+    private void notifyExpired(Chunkloader c) {
+        ServerPlayer creator = server.getPlayerList().getPlayer(c.creatorUuid());
+        if (creator == null) return;
+        String reasonSuffix = c.reason().isEmpty() ? "" : " (" + c.reason() + ")";
+        Component msg = Component.literal("Chunkloader ").withStyle(net.minecraft.ChatFormatting.GRAY)
+                .append(Component.literal(c.name()).withStyle(net.minecraft.ChatFormatting.AQUA))
+                .append(Component.literal(reasonSuffix + " has expired").withStyle(net.minecraft.ChatFormatting.GRAY));
+        creator.sendSystemMessage(msg);
+    }
+
     // ---------- placement ----------
 
     private boolean placeLoader(Chunkloader c) {
@@ -201,6 +262,9 @@ public final class ChunkloaderRegistry {
             return false;
         }
         GameProfile profile = new GameProfile(c.uuid(), c.name());
+        if (c.skinValue() != null) {
+            profile.getProperties().put("textures", new Property("textures", c.skinValue(), c.skinSignature()));
+        }
         CRFPFakePlayer fp = new CRFPFakePlayer(level, profile);
         fp.moveTo(c.pos().getX() + 0.5, c.pos().getY(), c.pos().getZ() + 0.5, 0f, 0f);
 
@@ -231,5 +295,18 @@ public final class ChunkloaderRegistry {
 
     private static String key(String name) {
         return name.toLowerCase(Locale.ROOT);
+    }
+
+    /** Returns the smallest unused slot in [1, MAX_SLOT], or -1 if all are taken. */
+    private int nextAvailableSlot() {
+        Set<Integer> used = new java.util.HashSet<>();
+        for (Chunkloader c : byName.values()) {
+            int s = slotOf(c.name());
+            if (s > 0) used.add(s);
+        }
+        for (int i = 1; i <= MAX_SLOT; i++) {
+            if (!used.contains(i)) return i;
+        }
+        return -1;
     }
 }

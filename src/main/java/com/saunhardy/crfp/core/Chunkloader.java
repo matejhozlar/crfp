@@ -21,13 +21,16 @@ public final class Chunkloader {
     private final UUID creatorUuid;
     private final String creatorName;
     private final long createdAtEpochMs;
+    private final @Nullable String skinValue;
+    private final @Nullable String skinSignature;
 
     private long remainingMs;
     private @Nullable CRFPFakePlayer fakePlayer;
     private boolean warned;
 
     public Chunkloader(UUID uuid, String name, String reason, String dimension, BlockPos pos,
-                       UUID creatorUuid, String creatorName, long createdAtEpochMs, long remainingMs) {
+                       UUID creatorUuid, String creatorName, long createdAtEpochMs, long remainingMs,
+                       @Nullable String skinValue, @Nullable String skinSignature) {
         this.uuid = uuid;
         this.name = name;
         this.reason = reason;
@@ -37,6 +40,8 @@ public final class Chunkloader {
         this.creatorName = creatorName;
         this.createdAtEpochMs = createdAtEpochMs;
         this.remainingMs = remainingMs;
+        this.skinValue = skinValue;
+        this.skinSignature = skinSignature;
     }
 
     public UUID uuid() { return uuid; }
@@ -48,6 +53,8 @@ public final class Chunkloader {
     public String creatorName() { return creatorName; }
     public long createdAtEpochMs() { return createdAtEpochMs; }
     public long remainingMs() { return remainingMs; }
+    public @Nullable String skinValue() { return skinValue; }
+    public @Nullable String skinSignature() { return skinSignature; }
     public @Nullable CRFPFakePlayer fakePlayer() { return fakePlayer; }
     public boolean warned() { return warned; }
 
