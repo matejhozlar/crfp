@@ -29,7 +29,10 @@ public abstract class PlayerListBroadcastMixin {
         if (message == null) return false;
         if (!(message.getContents() instanceof TranslatableContents tc)) return false;
         String key = tc.getKey();
-        if (!"multiplayer.player.joined".equals(key) && !"multiplayer.player.left".equals(key)) {
+        // "joined.renamed" is used when usercache.json knows the UUID under a different name.
+        if (!"multiplayer.player.joined".equals(key)
+                && !"multiplayer.player.joined.renamed".equals(key)
+                && !"multiplayer.player.left".equals(key)) {
             return false;
         }
         ChunkloaderRegistry reg = CRFP.registry();

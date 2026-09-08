@@ -11,6 +11,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
@@ -33,6 +34,7 @@ public final class CRFPFakePlayer extends FakePlayer {
     private final Connection dummyConnection;
     private final CommonListenerCookie cookie;
     private boolean placed;
+    private @Nullable Throwable lastPlaceError;
 
     public CRFPFakePlayer(ServerLevel level, GameProfile profile) {
         super(level, profile);
@@ -51,32 +53,47 @@ public final class CRFPFakePlayer extends FakePlayer {
         this.setHealth(this.getMaxHealth());
     }
 
-    public boolean isPlaced() {
-        return placed;
+    /** The exception thrown by the most recent failed {@link #placeInWorld()}, if any. */
+    public @Nullable Throwable lastPlaceError() {
+        return lastPlaceError;
     }
 
-    public void placeInWorld() {
-        if (placed) return;
-        MinecraftServer server = getServer();
-        if (server == null) {
-            CRFP.LOGGER.warn("Cannot place {} — no server", getGameProfile().getName());
-            return;
-        }
+    /**
+     * Logs this player into the server as if a client had connected. Returns true on success.
+     *
+     * <p>{@code placeNewPlayer} registers us in the player list and the level before it fires
+     * PlayerLoggedInEvent, so if another mod's login handler throws we would otherwise be left
+     * standing in the world with nobody managing us. Undo the registration in that case.
+     * LinkageError is caught alongside Exception because a version-mismatched mod typically
+     * fails with NoSuchMethodError or NoClassDefFoundError rather than an exception.
+     */
+    public boolean placeInWorld() {
+        if (placed) return true;
+        MinecraftServer server = serverLevel().getServer();
+        PlayerList playerList = server.getPlayerList();
         try {
-            server.getPlayerList().placeNewPlayer(dummyConnection, this, cookie);
+            playerList.placeNewPlayer(dummyConnection, this, cookie);
             placed = true;
-        } catch (Exception e) {
-            CRFP.LOGGER.error("Failed to place fake player {}", getGameProfile().getName(), e);
+            lastPlaceError = null;
+        } catch (Exception | LinkageError e) {
+            lastPlaceError = e;
+            if (playerList.getPlayer(getUUID()) == this) {
+                try {
+                    playerList.remove(this);
+                } catch (Exception | LinkageError cleanup) {
+                    CRFP.LOGGER.warn("Failed to undo partial login of fake player {}", getGameProfile().getName(), cleanup);
+                }
+            }
         }
+        return placed;
     }
 
     public void removeFromWorld() {
         if (!placed) return;
-        MinecraftServer server = getServer();
+        MinecraftServer server = serverLevel().getServer();
         try {
-            if (server != null) {
-                server.getPlayerList().remove(this);
-            }
+            this.disconnect();
+            server.getPlayerList().remove(this);
         } finally {
             try {
                 dummyConnection.disconnect(Component.literal("crfp despawn"));

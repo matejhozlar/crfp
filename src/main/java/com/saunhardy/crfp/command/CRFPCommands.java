@@ -132,6 +132,9 @@ public final class CRFPCommands {
                             + " · by " + c.creatorName()
                             + " · " + formatDuration(c.remainingMs()) + " left"
                             + reason).withStyle(ChatFormatting.GRAY));
+            if (!c.isPlaced()) {
+                line.append(Component.literal(" · NOT PLACED (retrying, see log)").withStyle(ChatFormatting.RED));
+            }
             src.sendSuccess(() -> line, false);
         }
         return sorted.size();
@@ -187,6 +190,12 @@ public final class CRFPCommands {
         line(src, "Reason",    c.reason().isEmpty() ? "(none)" : c.reason());
         line(src, "Created",   fmt.format(new Date(c.createdAtEpochMs())));
         line(src, "Remaining", formatDuration(c.remainingMs()));
+        if (c.isPlaced()) {
+            line(src, "Status", "active");
+        } else {
+            String why = c.lastPlaceFailure() == null ? "" : ": " + c.lastPlaceFailure();
+            line(src, "Status", "not placed (" + c.placeAttempts() + " failed attempt(s), retrying; timer paused)" + why);
+        }
         return 1;
     }
 
