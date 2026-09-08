@@ -62,6 +62,11 @@ public final class ChunkloaderHistory {
         append("expire", c, null, o -> o.addProperty("elapsedMs", elapsed(c)));
     }
 
+    /** A persisted loader was placed back into the world after a server restart. */
+    public void logRestore(Chunkloader c) {
+        append("restore", c, null, o -> o.addProperty("remainingMs", c.remainingMs()));
+    }
+
     private void append(String event, Chunkloader c, @Nullable String executor, @Nullable Consumer<JsonObject> extra) {
         JsonObject o = new JsonObject();
         o.addProperty("timestamp", Instant.now().toString());

@@ -11,6 +11,7 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.jetbrains.annotations.Nullable;
@@ -30,15 +31,36 @@ public final class CRFP {
 
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
-        registry = new ChunkloaderRegistry(event.getServer());
-        registry.load();
+        ChunkloaderRegistry r = new ChunkloaderRegistry(event.getServer());
+        registry = r;
+        // Reads the persisted file only. Fake players are placed on the first server tick so that
+        // every other mod has finished its own ServerStartedEvent handling first.
+        r.load();
     }
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
-        if (registry != null) {
-            registry.saveAndShutdown();
+        ChunkloaderRegistry r = registry;
+        if (r == null) return;
+        try {
+            r.saveAndShutdown();
+        } finally {
             registry = null;
+        }
+    }
+
+    /**
+     * NeoForge only fires ServerStoppingEvent on a clean stop. After a crash it goes straight to
+     * ServerStoppedEvent, so if the registry is still alive here the timers were never flushed.
+     * The levels are already closed at this point; only the file is written.
+     */
+    @SubscribeEvent
+    public void onServerStopped(ServerStoppedEvent event) {
+        ChunkloaderRegistry r = registry;
+        registry = null;
+        if (r != null) {
+            LOGGER.warn("Server stopped without a clean shutdown; flushing chunkloader state");
+            r.save();
         }
     }
 
