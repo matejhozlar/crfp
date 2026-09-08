@@ -1,15 +1,3 @@
-## Unreleased
-
-### Fixed
-- Restart recovery is now resilient. Persisted loaders are read on startup and their fake players are placed on the first server tick, after every other mod has finished starting. If placement fails (for example because another mod's login handler throws), the loader is kept and retried every 5 seconds instead of being dropped and erased from the save file. Pending loaders show as `NOT PLACED` in `/crfp list` and their timer is paused until they are in the world.
-- A login that failed halfway through no longer leaves an unmanaged fake player standing in the world.
-- Loader state is autosaved every 30 seconds while loaders exist, and flushed after a crash via `ServerStoppedEvent`, so a crash or hard kill loses at most 30 seconds of countdown instead of everything since the last command.
-- The `multiplayer.player.joined.renamed` join message is now suppressed for fake players too.
-
-### Added
-- `restore` events in the audit log (`/crfp history`) whenever a loader is placed back into the world after a restart.
-- `Status` line in `/crfp info`.
-
 ## Version 1.0.0
 
 ### Added
