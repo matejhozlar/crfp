@@ -190,9 +190,12 @@ public final class CRFPCommands {
         line(src, "Reason",    c.reason().isEmpty() ? "(none)" : c.reason());
         line(src, "Created",   fmt.format(new Date(c.createdAtEpochMs())));
         line(src, "Remaining", formatDuration(c.remainingMs()));
-        line(src, "Status",    c.isPlaced()
-                ? "active"
-                : "not placed yet (" + c.placeAttempts() + " failed attempt(s), retrying; timer paused)");
+        if (c.isPlaced()) {
+            line(src, "Status", "active");
+        } else {
+            String why = c.lastPlaceFailure() == null ? "" : ": " + c.lastPlaceFailure();
+            line(src, "Status", "not placed (" + c.placeAttempts() + " failed attempt(s), retrying; timer paused)" + why);
+        }
         return 1;
     }
 

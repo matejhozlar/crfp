@@ -53,10 +53,6 @@ public final class CRFPFakePlayer extends FakePlayer {
         this.setHealth(this.getMaxHealth());
     }
 
-    public boolean isPlaced() {
-        return placed;
-    }
-
     /** The exception thrown by the most recent failed {@link #placeInWorld()}, if any. */
     public @Nullable Throwable lastPlaceError() {
         return lastPlaceError;
@@ -68,6 +64,8 @@ public final class CRFPFakePlayer extends FakePlayer {
      * <p>{@code placeNewPlayer} registers us in the player list and the level before it fires
      * PlayerLoggedInEvent, so if another mod's login handler throws we would otherwise be left
      * standing in the world with nobody managing us. Undo the registration in that case.
+     * LinkageError is caught alongside Exception because a version-mismatched mod typically
+     * fails with NoSuchMethodError or NoClassDefFoundError rather than an exception.
      */
     public boolean placeInWorld() {
         if (placed) return true;
@@ -77,12 +75,12 @@ public final class CRFPFakePlayer extends FakePlayer {
             playerList.placeNewPlayer(dummyConnection, this, cookie);
             placed = true;
             lastPlaceError = null;
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             lastPlaceError = e;
             if (playerList.getPlayer(getUUID()) == this) {
                 try {
                     playerList.remove(this);
-                } catch (Exception cleanup) {
+                } catch (Exception | LinkageError cleanup) {
                     CRFP.LOGGER.warn("Failed to undo partial login of fake player {}", getGameProfile().getName(), cleanup);
                 }
             }

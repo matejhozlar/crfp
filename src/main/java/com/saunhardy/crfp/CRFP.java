@@ -33,9 +33,7 @@ public final class CRFP {
     public void onServerStarted(ServerStartedEvent event) {
         ChunkloaderRegistry r = new ChunkloaderRegistry(event.getServer());
         registry = r;
-        // Reads the persisted file only. Fake players are placed on the first server tick so that
-        // every other mod has finished its own ServerStartedEvent handling first.
-        r.load();
+        r.load(); // reads the file only; fake players are placed from the tick handler
     }
 
     @SubscribeEvent

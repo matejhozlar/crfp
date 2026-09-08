@@ -32,21 +32,21 @@ public final class ChunkloaderRegistry {
     public static final int TICK_INTERVAL_MS = 50;
     public static final String NAME_PREFIX = "Createrington_";
     public static final int MAX_SLOT = 99; // "Createrington_99" is 16 chars, the Mojang limit
-    /** Retry cadence for loaders that could not be placed into the world. 100 ticks = 5 s at 20 TPS. */
+    /** First retry delay for a loader that could not be placed; doubles per failure. 100 ticks = 5 s at 20 TPS. */
     public static final int PLACE_RETRY_INTERVAL_TICKS = 100;
+    /** Ceiling for the retry delay. 1200 ticks = 60 s. */
+    public static final int MAX_PLACE_RETRY_INTERVAL_TICKS = 1200;
     /** Autosave cadence while loaders exist, so a crash or kill loses at most this much countdown. 600 ticks = 30 s. */
     public static final int AUTOSAVE_INTERVAL_TICKS = 600;
-    /** Log a placement failure on the first attempt and then once per this many attempts (once a minute). */
-    private static final int PLACE_FAILURE_LOG_EVERY = 12;
     private static final Pattern NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
     private static final Pattern SLOT_PATTERN = Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$");
 
     private final MinecraftServer server;
     private final ChunkloaderHistory history;
     private final ConcurrentHashMap<String, Chunkloader> byName = new ConcurrentHashMap<>();
+    /** Names of fake players currently in the world or being logged in; used to silence join/leave chat. */
     private final Set<String> managedFakeNames = ConcurrentHashMap.newKeySet();
     private long tickCounter;
-    private boolean loaded;
 
     public ChunkloaderRegistry(MinecraftServer server) {
         this.server = server;
@@ -87,12 +87,9 @@ public final class ChunkloaderRegistry {
     /**
      * Reads persisted loaders into the registry. Nothing is spawned here: fake players are placed
      * from {@link #tick()} on the first server tick, after every other mod's ServerStartedEvent
-     * handler has run. Some mods' PlayerLoggedInEvent handlers assume a fully started server, and a
-     * failure there used to drop the loader for good.
+     * handler has run, because some mods' PlayerLoggedInEvent handlers assume a fully started server.
      */
     public void load() {
-        if (loaded) return;
-        loaded = true;
         int pending = 0;
         for (Chunkloader c : ChunkloaderPersistence.load(server)) {
             if (c.remainingMs() <= 0) continue;
@@ -100,7 +97,6 @@ public final class ChunkloaderRegistry {
                 CRFP.LOGGER.warn("Duplicate loader name '{}' in persisted data; skipping", c.name());
                 continue;
             }
-            managedFakeNames.add(c.name());
             pending++;
         }
         if (pending > 0) {
@@ -116,7 +112,7 @@ public final class ChunkloaderRegistry {
             try {
                 CRFPFakePlayer fp = c.fakePlayer();
                 if (fp != null) fp.removeFromWorld();
-            } catch (RuntimeException e) {
+            } catch (Exception | LinkageError e) {
                 CRFP.LOGGER.warn("Failed to despawn fake player for chunkloader '{}' during shutdown", c.name(), e);
             }
             c.detach();
@@ -179,11 +175,12 @@ public final class ChunkloaderRegistry {
                 skinValue, skinSignature
         );
 
-        if (!placeLoader(c)) {
-            return AddResult.fail("Failed to spawn fake player (see server log)");
+        PlaceFailure failure = placeLoader(c);
+        if (failure != null) {
+            CRFP.LOGGER.error("Failed to spawn fake player for chunkloader '{}': {}", name, failure.reason(), failure.cause());
+            return AddResult.fail("Failed to spawn fake player: " + failure.reason());
         }
         byName.put(key(name), c);
-        managedFakeNames.add(name);
         save();
         history.logCreate(c, minutes * 60_000L);
         return AddResult.ok(c);
@@ -198,15 +195,19 @@ public final class ChunkloaderRegistry {
         return true;
     }
 
-    /** Internal cleanup for a Chunkloader already pulled from byName. */
+    /**
+     * Internal cleanup for a Chunkloader already pulled from byName. Despawning fires
+     * PlayerLoggedOutEvent into every other mod, so it is guarded: whatever happens there, the
+     * loader is detached, its name released and the file rewritten.
+     */
     private void cleanupRemoved(Chunkloader c) {
         try {
             CRFPFakePlayer fp = c.fakePlayer();
-            // Keep the name in managedFakeNames until the fake player is gone so the broadcast
-            // mixin can still suppress any join/leave chatter triggered by the removal.
             if (fp != null) fp.removeFromWorld();
-            c.detach();
+        } catch (Exception | LinkageError e) {
+            CRFP.LOGGER.error("Failed to despawn fake player for chunkloader '{}'", c.name(), e);
         } finally {
+            c.detach();
             managedFakeNames.remove(c.name());
             save();
         }
@@ -240,29 +241,51 @@ public final class ChunkloaderRegistry {
 
         List<Chunkloader> expired = null;
         for (Chunkloader c : byName.values()) {
-            if (!c.isPlaced()) {
-                // Persisted entry awaiting placement, or a placement that failed earlier. The
-                // timer only runs while chunks are actually loaded, so no countdown here.
-                if (tickCounter >= c.nextPlaceAttemptTick()) tryPlacePending(c);
-                continue;
-            }
-            c.decrementRemainingMs(TICK_INTERVAL_MS);
-            if (c.remainingMs() <= 0) {
-                (expired == null ? expired = new ArrayList<>() : expired).add(c);
-                continue;
-            }
-            if (warnSeconds > 0 && !c.warned() && c.remainingMs() <= warnThresholdMs) {
-                notifyCreator(c);
-                c.markWarned();
+            try {
+                CRFPFakePlayer fp = c.fakePlayer();
+                if (fp != null && server.getPlayerList().getPlayer(c.uuid()) != fp) {
+                    // Something other than us took the fake player out of the player list (another
+                    // mod, a partial removeAll, ...). Without this the loader would keep counting
+                    // down while loading nothing. Fall back to the pending path and re-place it.
+                    c.detach();
+                    managedFakeNames.remove(c.name());
+                    long delay = retryDelayTicks(c.placeAttempts() + 1);
+                    c.recordPlaceFailure(tickCounter + delay,
+                            "fake player was removed from the player list by something else", null);
+                    CRFP.LOGGER.warn("Fake player for chunkloader '{}' vanished from the player list; re-placing in {}s",
+                            c.name(), delay / 20);
+                    continue;
+                }
+                if (fp == null) {
+                    // Pending placement. The timer only runs while chunks are actually loaded.
+                    if (tickCounter >= c.nextPlaceAttemptTick()) tryPlacePending(c);
+                    continue;
+                }
+                c.decrementRemainingMs(TICK_INTERVAL_MS);
+                if (c.remainingMs() <= 0) {
+                    (expired == null ? expired = new ArrayList<>() : expired).add(c);
+                    continue;
+                }
+                if (warnSeconds > 0 && !c.warned() && c.remainingMs() <= warnThresholdMs) {
+                    notifyCreator(c);
+                    c.markWarned();
+                }
+            } catch (Exception | LinkageError e) {
+                CRFP.LOGGER.error("Error while ticking chunkloader '{}'", c.name(), e);
             }
         }
         if (expired != null) {
             for (Chunkloader c : expired) {
                 CRFP.LOGGER.info("Chunkloader '{}' expired", c.name());
-                history.logExpire(c);
-                notifyExpired(c);
                 byName.remove(key(c.name()));
-                cleanupRemoved(c);
+                try {
+                    history.logExpire(c);
+                    notifyExpired(c);
+                } catch (Exception | LinkageError e) {
+                    CRFP.LOGGER.error("Error while expiring chunkloader '{}'", c.name(), e);
+                } finally {
+                    cleanupRemoved(c);
+                }
             }
         }
         if (tickCounter % AUTOSAVE_INTERVAL_TICKS == 0 && !byName.isEmpty()) {
@@ -271,20 +294,33 @@ public final class ChunkloaderRegistry {
     }
 
     private void tryPlacePending(Chunkloader c) {
-        if (placeLoader(c)) {
+        PlaceFailure failure = placeLoader(c);
+        if (failure == null) {
             CRFP.LOGGER.info("Restored chunkloader '{}' in {} at {} ({} min left)",
                     c.name(), c.dimension(), c.pos().toShortString(), c.remainingMs() / 60_000L);
             history.logRestore(c);
             c.resetPlaceAttempts();
             return;
         }
-        int attempts = c.recordPlaceFailure(tickCounter + PLACE_RETRY_INTERVAL_TICKS);
-        if (attempts == 1 || attempts % PLACE_FAILURE_LOG_EVERY == 0) {
-            CRFP.LOGGER.warn("Could not place chunkloader '{}' in {} at {} (attempt {}); retrying every {}s. "
-                            + "Run '/crfp remove {}' to discard it.",
-                    c.name(), c.dimension(), c.pos().toShortString(), attempts,
-                    PLACE_RETRY_INTERVAL_TICKS / 20, c.name());
+        long delay = retryDelayTicks(c.placeAttempts() + 1);
+        int attempts = c.recordPlaceFailure(tickCounter + delay, failure.reason(), failure.cause());
+        // Full stack trace on the first failure and every tenth after that; a one-line cause otherwise.
+        boolean trace = failure.cause() != null && (attempts == 1 || attempts % 10 == 0);
+        String msg = "Could not place chunkloader '{}' in {} at {} (attempt {}, next try in {}s): {}. "
+                + "Run '/crfp remove {}' to discard it.";
+        if (trace) {
+            CRFP.LOGGER.warn(msg, c.name(), c.dimension(), c.pos().toShortString(), attempts, delay / 20,
+                    failure.reason(), c.name(), failure.cause());
+        } else {
+            CRFP.LOGGER.warn(msg, c.name(), c.dimension(), c.pos().toShortString(), attempts, delay / 20,
+                    failure.reason(), c.name());
         }
+    }
+
+    /** 5 s, 10 s, 20 s, 40 s, then 60 s for every further attempt. */
+    private static long retryDelayTicks(int attempt) {
+        int shift = Math.min(Math.max(attempt - 1, 0), 4);
+        return Math.min((long) PLACE_RETRY_INTERVAL_TICKS << shift, MAX_PLACE_RETRY_INTERVAL_TICKS);
     }
 
     private void notifyCreator(Chunkloader c) {
@@ -308,15 +344,17 @@ public final class ChunkloaderRegistry {
 
     // ---------- placement ----------
 
+    /** Why a placement attempt failed. {@code cause} is null when nothing was thrown. */
+    private record PlaceFailure(String reason, @Nullable Throwable cause) {}
+
     /**
-     * Spawns the fake player for {@code c} and attaches it. Returns false on any failure; the
-     * loader itself is left untouched so the caller can decide whether to retry or discard.
+     * Spawns the fake player for {@code c} and attaches it. Returns null on success, otherwise the
+     * failure; the loader itself is left untouched so the caller can decide whether to retry.
      */
-    private boolean placeLoader(Chunkloader c) {
+    private @Nullable PlaceFailure placeLoader(Chunkloader c) {
         ServerLevel level = resolveLevel(c.dimension());
         if (level == null) {
-            CRFP.LOGGER.warn("Unknown dimension '{}' for chunkloader '{}'", c.dimension(), c.name());
-            return false;
+            return new PlaceFailure("dimension '" + c.dimension() + "' does not exist on this server", null);
         }
         GameProfile profile = new GameProfile(c.uuid(), c.name());
         if (c.skinValue() != null) {
@@ -326,31 +364,23 @@ public final class ChunkloaderRegistry {
         CRFPFakePlayer fp;
         try {
             fp = new CRFPFakePlayer(level, profile);
-        } catch (RuntimeException e) {
-            CRFP.LOGGER.error("Failed to construct fake player for chunkloader '{}'", c.name(), e);
-            return false;
+        } catch (RuntimeException | LinkageError e) {
+            return new PlaceFailure("fake player constructor threw " + e, e);
         }
         fp.moveTo(c.pos().getX() + 0.5, c.pos().getY(), c.pos().getZ() + 0.5, 0f, 0f);
 
-        managedFakeNames.add(c.name()); // suppress join broadcast
+        managedFakeNames.add(c.name()); // silence the join broadcast fired inside placeNewPlayer
         if (!fp.placeInWorld()) {
-            // Only a loader that isn't registered yet (the /crfp add path) should lose its name
-            // here; pending loaders keep it so their eventual join is still silenced.
-            if (!byName.containsKey(key(c.name()))) managedFakeNames.remove(c.name());
+            managedFakeNames.remove(c.name());
             Throwable cause = fp.lastPlaceError();
-            if (c.placeAttempts() == 0) {
-                CRFP.LOGGER.error("Failed to place fake player for chunkloader '{}'", c.name(), cause);
-            } else {
-                CRFP.LOGGER.debug("Failed to place fake player for chunkloader '{}': {}", c.name(), String.valueOf(cause));
-            }
-            return false;
+            return new PlaceFailure("login threw " + cause, cause);
         }
         // Re-assert position post-placement in case placeNewPlayer moved us to the respawn point.
         fp.teleportTo(level,
                 c.pos().getX() + 0.5, c.pos().getY(), c.pos().getZ() + 0.5,
                 0f, 0f);
         c.attach(fp);
-        return true;
+        return null;
     }
 
     private @Nullable ServerLevel resolveLevel(String dimension) {
