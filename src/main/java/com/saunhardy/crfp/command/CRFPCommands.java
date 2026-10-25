@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -41,15 +42,15 @@ public final class CRFPCommands {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("crfp")
                 .requires(src -> src.hasPermission(Config.PERMISSION_LEVEL.get()));
 
+        // /crfp add <minutes|permanent> [reason...]
+        // /crfp add named <name> <minutes|permanent> [reason...]
         root.then(Commands.literal("add")
-                .then(Commands.literal("permanent")
-                        .executes(ctx -> doAddPermanent(ctx, ""))
-                        .then(Commands.argument("reason", StringArgumentType.greedyString())
-                                .executes(ctx -> doAddPermanent(ctx, StringArgumentType.getString(ctx, "reason")))))
-                .then(Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
-                        .executes(ctx -> doAdd(ctx, ""))
-                        .then(Commands.argument("reason", StringArgumentType.greedyString())
-                                .executes(ctx -> doAdd(ctx, StringArgumentType.getString(ctx, "reason"))))));
+                .then(Commands.literal("named")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .then(durationBranch(true))
+                                .then(permanentBranch(true))))
+                .then(durationBranch(false))
+                .then(permanentBranch(false)));
 
         root.then(Commands.literal("list")
                 .executes(CRFPCommands::doList));
@@ -78,6 +79,20 @@ public final class CRFPCommands {
         dispatcher.register(root);
     }
 
+    private static ArgumentBuilder<CommandSourceStack, ?> durationBranch(boolean named) {
+        return Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
+                .executes(ctx -> doAdd(ctx, named, false, ""))
+                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                        .executes(ctx -> doAdd(ctx, named, false, StringArgumentType.getString(ctx, "reason"))));
+    }
+
+    private static ArgumentBuilder<CommandSourceStack, ?> permanentBranch(boolean named) {
+        return Commands.literal("permanent")
+                .executes(ctx -> doAdd(ctx, named, true, ""))
+                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                        .executes(ctx -> doAdd(ctx, named, true, StringArgumentType.getString(ctx, "reason"))));
+    }
+
     private static Iterable<String> activeNames() {
         ChunkloaderRegistry r = CRFP.registry();
         if (r == null) return List.of();
@@ -92,37 +107,35 @@ public final class CRFPCommands {
 
     // ---------- add ----------
 
-    private static int doAdd(CommandContext<CommandSourceStack> ctx, String reason) throws CommandSyntaxException {
+    /**
+     * @param named     whether the command carried a {@code name} argument
+     * @param permanent {@code permanent} keyword instead of a {@code minutes} argument
+     */
+    private static int doAdd(CommandContext<CommandSourceStack> ctx, boolean named, boolean permanent, String reason)
+            throws CommandSyntaxException {
         CommandSourceStack src = ctx.getSource();
         ServerPlayer player = src.getPlayer();
         if (player == null) throw ERR_NOT_PLAYER.create();
 
         ChunkloaderRegistry reg = requireRegistry();
-        int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
+        String name = named ? StringArgumentType.getString(ctx, "name") : null;
 
-        ChunkloaderRegistry.AddResult result = reg.add(minutes, reason, player);
+        ChunkloaderRegistry.AddResult result;
+        String activeFor;
+        if (permanent) {
+            result = reg.addPermanent(name, reason, player);
+            activeFor = "permanently (until /crfp remove)";
+        } else {
+            int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
+            result = reg.add(minutes, name, reason, player);
+            activeFor = "for " + minutes + "m";
+        }
         if (!result.success) {
             src.sendFailure(Component.literal(result.message));
             return 0;
         }
         Chunkloader c = result.chunkloader;
-        src.sendSuccess(() -> Component.literal("Chunkloader '" + c.name() + "' active for " + minutes + "m").withStyle(ChatFormatting.GREEN), true);
-        return 1;
-    }
-
-    private static int doAddPermanent(CommandContext<CommandSourceStack> ctx, String reason) throws CommandSyntaxException {
-        CommandSourceStack src = ctx.getSource();
-        ServerPlayer player = src.getPlayer();
-        if (player == null) throw ERR_NOT_PLAYER.create();
-
-        ChunkloaderRegistry reg = requireRegistry();
-        ChunkloaderRegistry.AddResult result = reg.addPermanent(reason, player);
-        if (!result.success) {
-            src.sendFailure(Component.literal(result.message));
-            return 0;
-        }
-        Chunkloader c = result.chunkloader;
-        src.sendSuccess(() -> Component.literal("Chunkloader '" + c.name() + "' active permanently (until /crfp remove)").withStyle(ChatFormatting.GREEN), true);
+        src.sendSuccess(() -> Component.literal("Chunkloader '" + c.name() + "' active " + activeFor).withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
 

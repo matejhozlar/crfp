@@ -12,11 +12,14 @@ All require OP level 2 by default (configurable).
 |---|---|
 | `/crfp add <minutes> [reason...]` | Spawn a fake player at your current position. |
 | `/crfp add permanent [reason...]` | Spawn a fake player with no timer. It stays, across restarts, until `/crfp remove`. |
+| `/crfp add named <name> <minutes\|permanent> [reason...]` | Same, but with a name of your choice instead of the automatic `Createrington_N`. The name is the fake player's username and tab-list name. |
 | `/crfp list` | Show active loaders. |
 | `/crfp info <name>` | Details for one loader. |
 | `/crfp extend <name> <minutes>` | Add time (capped at 24h). Not applicable to permanent loaders. |
 | `/crfp remove <name>` | Despawn early. |
 | `/crfp history [limit]` | Tail of the audit log, color-coded. |
+
+Names must be 3 to 16 letters, digits or underscores, must not be in use by another loader, and must not belong to a player who is online. Do not use the name of a real player on your server: in offline mode the fake player would take over their UUID.
 
 ## Persistence
 
@@ -32,6 +35,7 @@ On startup the persisted loaders are placed back into the world on the first ser
 - `maxDurationMinutes` — hard cap per loader. Default 1440 (24 h).
 - `defaultDurationMinutes` — used when `<minutes>` is omitted. Default 60.
 - `allowPermanentLoaders` — whether `/crfp add permanent` is allowed. Default true. `maxDurationMinutes` does not apply to permanent loaders.
+- `showTabListPrefix` — show `[CRFP]` in front of fake players in the tab list. Default true. Off, a loader appears under its bare name (`Createrington#3` or the custom name).
 - `warnBeforeExpirySeconds` — action-bar warning lead time. Default 30.
 - `permissionLevel` — OP level required for `/crfp`. Default 2.
 

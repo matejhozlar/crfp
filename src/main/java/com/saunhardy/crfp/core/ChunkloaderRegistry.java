@@ -142,23 +142,47 @@ public final class ChunkloaderRegistry {
         public static AddResult fail(String m) { return new AddResult(false, m, null); }
     }
 
-    public AddResult add(long minutes, String reason, ServerPlayer creator) {
+    /**
+     * Timed loader. {@code customName} becomes the fake player's username (and tab-list name); null picks
+     * the next free {@code Createrington_N} slot.
+     */
+    public AddResult add(long minutes, @Nullable String customName, String reason, ServerPlayer creator) {
         int maxMin = Config.MAX_DURATION_MINUTES.get();
         if (minutes < 1 || minutes > maxMin) {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
-        return create(minutes * 60_000L, false, reason, creator);
+        return create(minutes * 60_000L, false, customName, reason, creator);
     }
 
     /** A loader with no timer. Subject to {@link Config#ALLOW_PERMANENT} but not to the duration cap. */
-    public AddResult addPermanent(String reason, ServerPlayer creator) {
+    public AddResult addPermanent(@Nullable String customName, String reason, ServerPlayer creator) {
         if (!Config.ALLOW_PERMANENT.get()) {
             return AddResult.fail("Permanent chunkloaders are disabled in the server config (allowPermanentLoaders)");
         }
-        return create(0, true, reason, creator);
+        return create(0, true, customName, reason, creator);
     }
 
-    private AddResult create(long durationMs, boolean permanent, String reason, ServerPlayer creator) {
+    /**
+     * Checks a user-supplied loader name. Returns null if it can be used, otherwise the reason it cannot.
+     * The name is a real username on the server, so it must be a legal one, unused by another loader and
+     * not belong to a player who is currently online. The slot scheme is not reserved: naming a loader
+     * {@code Createrington_5} by hand just takes that slot.
+     */
+    private @Nullable String rejectName(String name) {
+        if (!isValidName(name)) {
+            return "Name must be 3 to 16 characters: letters, digits and underscores only";
+        }
+        if (byName.containsKey(key(name))) {
+            return "A chunkloader named '" + name + "' already exists";
+        }
+        if (server.getPlayerList().getPlayerByName(name) != null) {
+            return "'" + name + "' is a player who is online right now";
+        }
+        return null;
+    }
+
+    private AddResult create(long durationMs, boolean permanent, @Nullable String customName, String reason,
+                             ServerPlayer creator) {
         ServerLevel level = creator.serverLevel();
         BlockPos pos = creator.blockPosition();
         if (pos.getY() < level.getMinBuildHeight()) {
@@ -166,11 +190,18 @@ public final class ChunkloaderRegistry {
         }
         String dim = level.dimension().location().toString();
 
-        int slot = nextAvailableSlot();
-        if (slot < 0) {
-            return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
+        String name;
+        if (customName != null) {
+            String rejected = rejectName(customName);
+            if (rejected != null) return AddResult.fail(rejected);
+            name = customName;
+        } else {
+            int slot = nextAvailableSlot();
+            if (slot < 0) {
+                return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
+            }
+            name = NAME_PREFIX + slot;
         }
-        String name = NAME_PREFIX + slot;
 
         UUID uuid = offlineUuid(name);
         long now = System.currentTimeMillis();
