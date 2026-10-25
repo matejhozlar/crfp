@@ -13,6 +13,9 @@ import java.util.UUID;
  *
  * Name is also the fake player's username — unique per active loader.
  *
+ * A <em>permanent</em> loader has no timer. It is never ticked down, never warned about and
+ * never expires; only {@code /crfp remove} ends it.
+ *
  * A loader with no attached fake player is <em>pending placement</em>: it was read from
  * disk, a placement attempt failed, or its fake player disappeared from the player list.
  * The registry keeps trying to put it into the world; its timer does not run while pending.
@@ -26,6 +29,7 @@ public final class Chunkloader {
     private final UUID creatorUuid;
     private final String creatorName;
     private final long createdAtEpochMs;
+    private final boolean permanent;
     private final @Nullable String skinValue;
     private final @Nullable String skinSignature;
 
@@ -39,7 +43,7 @@ public final class Chunkloader {
 
     public Chunkloader(UUID uuid, String name, String reason, String dimension, BlockPos pos,
                        UUID creatorUuid, String creatorName, long createdAtEpochMs, long remainingMs,
-                       @Nullable String skinValue, @Nullable String skinSignature) {
+                       boolean permanent, @Nullable String skinValue, @Nullable String skinSignature) {
         this.uuid = uuid;
         this.name = name;
         this.reason = reason;
@@ -48,7 +52,8 @@ public final class Chunkloader {
         this.creatorUuid = creatorUuid;
         this.creatorName = creatorName;
         this.createdAtEpochMs = createdAtEpochMs;
-        this.remainingMs = remainingMs;
+        this.remainingMs = permanent ? 0 : remainingMs;
+        this.permanent = permanent;
         this.skinValue = skinValue;
         this.skinSignature = skinSignature;
     }
@@ -62,6 +67,8 @@ public final class Chunkloader {
     public String creatorName() { return creatorName; }
     public long createdAtEpochMs() { return createdAtEpochMs; }
     public long remainingMs() { return remainingMs; }
+    /** True for a loader with no timer: it stays until an admin removes it. {@link #remainingMs()} is 0 and ignored. */
+    public boolean permanent() { return permanent; }
     public @Nullable String skinValue() { return skinValue; }
     public @Nullable String skinSignature() { return skinSignature; }
     public @Nullable CRFPFakePlayer fakePlayer() { return fakePlayer; }

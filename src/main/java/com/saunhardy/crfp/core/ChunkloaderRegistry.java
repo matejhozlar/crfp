@@ -92,7 +92,7 @@ public final class ChunkloaderRegistry {
     public void load() {
         int pending = 0;
         for (Chunkloader c : ChunkloaderPersistence.load(server)) {
-            if (c.remainingMs() <= 0) continue;
+            if (!c.permanent() && c.remainingMs() <= 0) continue;
             if (byName.putIfAbsent(key(c.name()), c) != null) {
                 CRFP.LOGGER.warn("Duplicate loader name '{}' in persisted data; skipping", c.name());
                 continue;
@@ -147,7 +147,18 @@ public final class ChunkloaderRegistry {
         if (minutes < 1 || minutes > maxMin) {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
+        return create(minutes * 60_000L, false, reason, creator);
+    }
 
+    /** A loader with no timer. Subject to {@link Config#ALLOW_PERMANENT} but not to the duration cap. */
+    public AddResult addPermanent(String reason, ServerPlayer creator) {
+        if (!Config.ALLOW_PERMANENT.get()) {
+            return AddResult.fail("Permanent chunkloaders are disabled in the server config (allowPermanentLoaders)");
+        }
+        return create(0, true, reason, creator);
+    }
+
+    private AddResult create(long durationMs, boolean permanent, String reason, ServerPlayer creator) {
         ServerLevel level = creator.serverLevel();
         BlockPos pos = creator.blockPosition();
         if (pos.getY() < level.getMinBuildHeight()) {
@@ -171,7 +182,7 @@ public final class ChunkloaderRegistry {
         Chunkloader c = new Chunkloader(
                 uuid, name, reason == null ? "" : reason, dim, pos,
                 creator.getUUID(), creator.getGameProfile().getName(),
-                now, minutes * 60_000L,
+                now, durationMs, permanent,
                 skinValue, skinSignature
         );
 
@@ -182,7 +193,7 @@ public final class ChunkloaderRegistry {
         }
         byName.put(key(name), c);
         save();
-        history.logCreate(c, minutes * 60_000L);
+        history.logCreate(c, durationMs);
         return AddResult.ok(c);
     }
 
@@ -213,13 +224,16 @@ public final class ChunkloaderRegistry {
         }
     }
 
-    public record ExtendResult(boolean found, long actuallyAddedMs, long newRemainingMs, boolean capped) {
-        public static ExtendResult notFound() { return new ExtendResult(false, 0, 0, false); }
+    /** {@code permanent} is true when the loader exists but has no timer to extend; nothing was changed then. */
+    public record ExtendResult(boolean found, boolean permanent, long actuallyAddedMs, long newRemainingMs, boolean capped) {
+        public static ExtendResult notFound() { return new ExtendResult(false, false, 0, 0, false); }
+        public static ExtendResult noTimer() { return new ExtendResult(true, true, 0, 0, false); }
     }
 
     public ExtendResult extend(String name, long addMinutes, @Nullable String executor) {
         Chunkloader c = byName.get(key(name));
         if (c == null) return ExtendResult.notFound();
+        if (c.permanent()) return ExtendResult.noTimer();
         long maxMs = Config.MAX_DURATION_MINUTES.get() * 60_000L;
         long requestedMs = addMinutes * 60_000L;
         long newRemaining = Math.min(c.remainingMs() + requestedMs, maxMs);
@@ -228,7 +242,7 @@ public final class ChunkloaderRegistry {
         c.setRemainingMs(newRemaining);
         save();
         history.logExtend(c, actuallyAdded, newRemaining, executor);
-        return new ExtendResult(true, actuallyAdded, newRemaining, capped);
+        return new ExtendResult(true, false, actuallyAdded, newRemaining, capped);
     }
 
     // ---------- tick ----------
@@ -261,6 +275,7 @@ public final class ChunkloaderRegistry {
                     if (tickCounter >= c.nextPlaceAttemptTick()) tryPlacePending(c);
                     continue;
                 }
+                if (c.permanent()) continue; // no timer, no warning, no expiry
                 c.decrementRemainingMs(TICK_INTERVAL_MS);
                 if (c.remainingMs() <= 0) {
                     (expired == null ? expired = new ArrayList<>() : expired).add(c);
@@ -296,8 +311,9 @@ public final class ChunkloaderRegistry {
     private void tryPlacePending(Chunkloader c) {
         PlaceFailure failure = placeLoader(c);
         if (failure == null) {
-            CRFP.LOGGER.info("Restored chunkloader '{}' in {} at {} ({} min left)",
-                    c.name(), c.dimension(), c.pos().toShortString(), c.remainingMs() / 60_000L);
+            CRFP.LOGGER.info("Restored chunkloader '{}' in {} at {} ({})",
+                    c.name(), c.dimension(), c.pos().toShortString(),
+                    c.permanent() ? "permanent" : c.remainingMs() / 60_000L + " min left");
             history.logRestore(c);
             c.resetPlaceAttempts();
             return;

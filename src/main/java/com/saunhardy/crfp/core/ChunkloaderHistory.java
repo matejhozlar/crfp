@@ -43,8 +43,9 @@ public final class ChunkloaderHistory {
 
     public Path file() { return file; }
 
+    /** {@code durationMs} is ignored for a permanent loader; the entry carries {@code "permanent": true} instead. */
     public void logCreate(Chunkloader c, long durationMs) {
-        append("create", c, null, o -> o.addProperty("durationMs", durationMs));
+        append("create", c, null, o -> { if (!c.permanent()) o.addProperty("durationMs", durationMs); });
     }
 
     public void logExtend(Chunkloader c, long addedMs, long newRemainingMs, @Nullable String executor) {
@@ -64,7 +65,7 @@ public final class ChunkloaderHistory {
 
     /** A persisted loader was placed back into the world after a server restart. */
     public void logRestore(Chunkloader c) {
-        append("restore", c, null, o -> o.addProperty("remainingMs", c.remainingMs()));
+        append("restore", c, null, o -> { if (!c.permanent()) o.addProperty("remainingMs", c.remainingMs()); });
     }
 
     private void append(String event, Chunkloader c, @Nullable String executor, @Nullable Consumer<JsonObject> extra) {
@@ -75,6 +76,7 @@ public final class ChunkloaderHistory {
         o.addProperty("creator", c.creatorName());
         o.addProperty("creatorUuid", c.creatorUuid().toString());
         if (!c.reason().isEmpty()) o.addProperty("reason", c.reason());
+        if (c.permanent()) o.addProperty("permanent", true);
         o.addProperty("dimension", c.dimension());
         JsonArray pos = new JsonArray(3);
         pos.add(c.pos().getX()); pos.add(c.pos().getY()); pos.add(c.pos().getZ());

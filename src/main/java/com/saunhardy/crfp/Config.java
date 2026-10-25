@@ -14,6 +14,11 @@ public final class Config {
             .comment("Default duration in minutes when the user omits the argument.")
             .defineInRange("defaultDurationMinutes", 60, 1, 1440);
 
+    public static final ModConfigSpec.BooleanValue ALLOW_PERMANENT = BUILDER
+            .comment("Whether '/crfp add permanent' is allowed. A permanent chunkloader has no timer",
+                    "and survives restarts until an admin runs '/crfp remove'. maxDurationMinutes does not apply to it.")
+            .define("allowPermanentLoaders", true);
+
     public static final ModConfigSpec.IntValue WARN_BEFORE_EXPIRY_SECONDS = BUILDER
             .comment("Seconds before expiry to send an action-bar warning to the creator (0 disables).")
             .defineInRange("warnBeforeExpirySeconds", 30, 0, 3600);
