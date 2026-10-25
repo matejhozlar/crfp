@@ -42,14 +42,8 @@ public final class CRFPCommands {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("crfp")
                 .requires(src -> src.hasPermission(Config.PERMISSION_LEVEL.get()));
 
-        // /crfp add [name] <minutes|permanent> [reason...]
-        //
-        // The optional name sits beside <minutes> and 'permanent' as a third child. Brigadier tries
-        // only the literal when the first word is exactly 'permanent'; otherwise it tries every
-        // argument child in registration order and keeps the parse that consumed all input without
-        // errors, first registered winning a tie. <minutes> is therefore registered before <name>:
-        // "60 witch farm" is 60 minutes with a reason, never a loader called "60", and "Farm 60" can
-        // only be a name because "Farm" is not an integer.
+        // /crfp add [name] <minutes|permanent> [reason...]. <minutes> is registered before <name> so
+        // Brigadier prefers the duration when a word parses as both; the registry rejects digits-only names.
         root.then(Commands.literal("add")
                 .then(durationBranch(false))
                 .then(permanentBranch(false))
@@ -112,10 +106,6 @@ public final class CRFPCommands {
 
     // ---------- add ----------
 
-    /**
-     * @param named     whether the command carried a {@code name} argument
-     * @param permanent {@code permanent} keyword instead of a {@code minutes} argument
-     */
     private static int doAdd(CommandContext<CommandSourceStack> ctx, boolean named, boolean permanent, String reason)
             throws CommandSyntaxException {
         CommandSourceStack src = ctx.getSource();
@@ -246,7 +236,6 @@ public final class CRFPCommands {
                 .append(Component.literal(value).withStyle(ChatFormatting.WHITE)), false);
     }
 
-    /** "permanent" or e.g. "1h 20m left", for list output. */
     private static String remainingText(Chunkloader c) {
         return c.permanent() ? "permanent" : formatDuration(c.remainingMs()) + " left";
     }

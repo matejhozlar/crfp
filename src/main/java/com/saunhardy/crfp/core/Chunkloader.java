@@ -12,7 +12,7 @@ import java.util.UUID;
  * the server session.
  *
  * Name is also the fake player's username — unique per active loader. It is either an
- * auto-assigned {@code Createrington_N} slot or a name the admin chose on {@code /crfp add named}.
+ * auto-assigned {@code Createrington_N} slot or a name the admin chose on {@code /crfp add <name> ...}.
  *
  * A <em>permanent</em> loader has no timer. It is never ticked down, never warned about and
  * never expires; only {@code /crfp remove} ends it.

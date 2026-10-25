@@ -19,7 +19,7 @@ All require OP level 2 by default (configurable).
 | `/crfp remove <name>` | Despawn early. |
 | `/crfp history [limit]` | Tail of the audit log, color-coded. |
 
-Names must be 3 to 16 letters, digits or underscores, must not be in use by another loader, and must not belong to a player who is online. A name made only of digits is read as the minutes argument instead, and `permanent` is a keyword. Do not use the name of a real player on your server: in offline mode the fake player would take over their UUID.
+Names must be 3 to 16 letters, digits or underscores, cannot be only digits or the word `permanent`, and must not be in use by another loader. Names of players who are online or who have played on this server are refused, so a loader can never take over a player's identity; if a player with a loader's name logs in later, the loader waits (shown as `NOT PLACED`) until they leave. Names of other real Minecraft accounts are not checked, so avoid them.
 
 ## Persistence
 
