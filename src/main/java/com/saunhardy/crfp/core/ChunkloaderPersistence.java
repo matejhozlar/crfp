@@ -24,6 +24,8 @@ import java.util.UUID;
  *
  * Timers are paused across server restarts: only {@code remainingMs} is saved,
  * never absolute expiry. On load, decrementing resumes from whatever was last written.
+ * A permanent loader is written with {@code "permanent": true} and {@code remainingMs} 0;
+ * a mod version that predates the flag drops such an entry on load instead of misreading it.
  */
 public final class ChunkloaderPersistence {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -99,6 +101,9 @@ public final class ChunkloaderPersistence {
         o.addProperty("creatorName", c.creatorName());
         o.addProperty("createdAtEpochMs", c.createdAtEpochMs());
         o.addProperty("remainingMs", c.remainingMs());
+        if (c.permanent()) {
+            o.addProperty("permanent", true);
+        }
         if (c.skinValue() != null) {
             o.addProperty("skinValue", c.skinValue());
             if (c.skinSignature() != null) {
@@ -118,10 +123,11 @@ public final class ChunkloaderPersistence {
         UUID creatorUuid = UUID.fromString(o.get("creatorUuid").getAsString());
         String creatorName = o.get("creatorName").getAsString();
         long createdAt = o.get("createdAtEpochMs").getAsLong();
-        long remaining = o.get("remainingMs").getAsLong();
+        boolean permanent = o.has("permanent") && o.get("permanent").getAsBoolean();
+        long remaining = o.has("remainingMs") ? o.get("remainingMs").getAsLong() : 0;
         String skinValue = o.has("skinValue") ? o.get("skinValue").getAsString() : null;
         String skinSignature = o.has("skinSignature") ? o.get("skinSignature").getAsString() : null;
         return new Chunkloader(uuid, name, reason, dimension, pos, creatorUuid, creatorName,
-                createdAt, remaining, skinValue, skinSignature);
+                createdAt, remaining, permanent, skinValue, skinSignature);
     }
 }

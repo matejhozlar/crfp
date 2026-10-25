@@ -5,6 +5,7 @@ import com.mojang.authlib.properties.Property;
 import com.saunhardy.crfp.CRFP;
 import com.saunhardy.crfp.Config;
 import com.saunhardy.crfp.fakeplayer.CRFPFakePlayer;
+import com.saunhardy.crfp.mixin.GameProfileCacheAccessor;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
@@ -14,10 +15,15 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.GameProfileCache;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.LevelResource;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -39,7 +45,9 @@ public final class ChunkloaderRegistry {
     /** Autosave cadence while loaders exist, so a crash or kill loses at most this much countdown. 600 ticks = 30 s. */
     public static final int AUTOSAVE_INTERVAL_TICKS = 600;
     private static final Pattern NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
-    private static final Pattern SLOT_PATTERN = Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$");
+    /** Case-insensitive, like {@link #key(String)}, so a custom "createrington_3" occupies slot 3. */
+    private static final Pattern SLOT_PATTERN =
+            Pattern.compile("^" + Pattern.quote(NAME_PREFIX) + "(\\d+)$", Pattern.CASE_INSENSITIVE);
 
     private final MinecraftServer server;
     private final ChunkloaderHistory history;
@@ -92,7 +100,7 @@ public final class ChunkloaderRegistry {
     public void load() {
         int pending = 0;
         for (Chunkloader c : ChunkloaderPersistence.load(server)) {
-            if (c.remainingMs() <= 0) continue;
+            if (!c.permanent() && c.remainingMs() <= 0) continue;
             if (byName.putIfAbsent(key(c.name()), c) != null) {
                 CRFP.LOGGER.warn("Duplicate loader name '{}' in persisted data; skipping", c.name());
                 continue;
@@ -142,12 +150,79 @@ public final class ChunkloaderRegistry {
         public static AddResult fail(String m) { return new AddResult(false, m, null); }
     }
 
-    public AddResult add(long minutes, String reason, ServerPlayer creator) {
+    /**
+     * Timed loader. {@code customName} becomes the fake player's username (and tab-list name); null picks
+     * the next free {@code Createrington_N} slot.
+     */
+    public AddResult add(long minutes, @Nullable String customName, String reason, ServerPlayer creator) {
         int maxMin = Config.MAX_DURATION_MINUTES.get();
         if (minutes < 1 || minutes > maxMin) {
             return AddResult.fail("Duration must be between 1 and " + maxMin + " minutes");
         }
+        return create(minutes * 60_000L, false, customName, reason, creator);
+    }
 
+    /** A loader with no timer. Subject to {@link Config#ALLOW_PERMANENT} but not to the duration cap. */
+    public AddResult addPermanent(@Nullable String customName, String reason, ServerPlayer creator) {
+        if (!Config.ALLOW_PERMANENT.get()) {
+            return AddResult.fail("Permanent chunkloaders are disabled in the server config (allowPermanentLoaders)");
+        }
+        return create(0, true, customName, reason, creator);
+    }
+
+    /**
+     * Checks a user-supplied loader name. Returns null if it can be used, otherwise the reason it cannot.
+     * The name is a real username on the server, so it must be a legal one, unused by another loader and
+     * not belong to a player who is online or has played here. The slot scheme is not reserved: naming a
+     * loader {@code Createrington_5} by hand just takes that slot.
+     */
+    private @Nullable String rejectName(String name) {
+        if (!isValidName(name)) {
+            return "Name must be 3 to 16 characters: letters, digits and underscores only";
+        }
+        if (name.chars().allMatch(Character::isDigit)) {
+            // Brigadier only prefers <minutes> over <name> when the number is within 1..1440.
+            return "Name cannot be only digits (a duration must be between 1 and "
+                    + Config.MAX_DURATION_MINUTES.get() + " minutes)";
+        }
+        if (name.equalsIgnoreCase("permanent")) {
+            return "'permanent' is a keyword and cannot be used as a name";
+        }
+        if (byName.containsKey(key(name))) {
+            return "A chunkloader named '" + name + "' already exists";
+        }
+        if (server.getPlayerList().getPlayerByName(name) != null) {
+            return "'" + name + "' is a player who is online right now";
+        }
+        if (hasPlayedHere(name)) {
+            return "'" + name + "' is a player who has played on this server";
+        }
+        return null;
+    }
+
+    /**
+     * Whether a real player with this name has a playerdata file in this world. Fake players never get
+     * one (see PlayerListPersistenceMixin), so a removed loader's name can be reused. In offline mode the
+     * UUID follows from the name; otherwise the usercache resolves it, but only when it already knows
+     * the name, since {@link GameProfileCache#get(String)} would otherwise ask Mojang over the network.
+     */
+    private boolean hasPlayedHere(String name) {
+        Path playerData = server.getWorldPath(LevelResource.PLAYER_DATA_DIR);
+        if (!server.usesAuthentication() && Files.exists(playerData.resolve(offlineUuid(name) + ".dat"))) {
+            return true;
+        }
+        GameProfileCache cache = server.getProfileCache();
+        if (cache == null) return false;
+        if (!((GameProfileCacheAccessor) cache).crfp$profilesByName().containsKey(name.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        return cache.get(name)
+                .map(profile -> Files.exists(playerData.resolve(profile.getId() + ".dat")))
+                .orElse(false);
+    }
+
+    private AddResult create(long durationMs, boolean permanent, @Nullable String customName, String reason,
+                             ServerPlayer creator) {
         ServerLevel level = creator.serverLevel();
         BlockPos pos = creator.blockPosition();
         if (pos.getY() < level.getMinBuildHeight()) {
@@ -155,11 +230,22 @@ public final class ChunkloaderRegistry {
         }
         String dim = level.dimension().location().toString();
 
-        int slot = nextAvailableSlot();
-        if (slot < 0) {
-            return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
+        String name;
+        if (customName != null) {
+            String rejected = rejectName(customName);
+            if (rejected != null) return AddResult.fail(rejected);
+            name = customName;
+        } else {
+            int slot = nextAvailableSlot();
+            if (slot < 0) {
+                return AddResult.fail("All " + MAX_SLOT + " chunkloader slots are in use");
+            }
+            name = NAME_PREFIX + slot;
         }
-        String name = NAME_PREFIX + slot;
+        if (byName.containsKey(key(name))) {
+            // Cannot happen with the checks above; kept so a slip there can never overwrite a live loader.
+            return AddResult.fail("A chunkloader named '" + name + "' already exists");
+        }
 
         UUID uuid = offlineUuid(name);
         long now = System.currentTimeMillis();
@@ -171,7 +257,7 @@ public final class ChunkloaderRegistry {
         Chunkloader c = new Chunkloader(
                 uuid, name, reason == null ? "" : reason, dim, pos,
                 creator.getUUID(), creator.getGameProfile().getName(),
-                now, minutes * 60_000L,
+                now, durationMs, permanent,
                 skinValue, skinSignature
         );
 
@@ -182,7 +268,7 @@ public final class ChunkloaderRegistry {
         }
         byName.put(key(name), c);
         save();
-        history.logCreate(c, minutes * 60_000L);
+        history.logCreate(c, durationMs);
         return AddResult.ok(c);
     }
 
@@ -213,13 +299,16 @@ public final class ChunkloaderRegistry {
         }
     }
 
-    public record ExtendResult(boolean found, long actuallyAddedMs, long newRemainingMs, boolean capped) {
-        public static ExtendResult notFound() { return new ExtendResult(false, 0, 0, false); }
+    /** {@code permanent} is true when the loader exists but has no timer to extend; nothing was changed then. */
+    public record ExtendResult(boolean found, boolean permanent, long actuallyAddedMs, long newRemainingMs, boolean capped) {
+        public static ExtendResult notFound() { return new ExtendResult(false, false, 0, 0, false); }
+        public static ExtendResult noTimer() { return new ExtendResult(true, true, 0, 0, false); }
     }
 
     public ExtendResult extend(String name, long addMinutes, @Nullable String executor) {
         Chunkloader c = byName.get(key(name));
         if (c == null) return ExtendResult.notFound();
+        if (c.permanent()) return ExtendResult.noTimer();
         long maxMs = Config.MAX_DURATION_MINUTES.get() * 60_000L;
         long requestedMs = addMinutes * 60_000L;
         long newRemaining = Math.min(c.remainingMs() + requestedMs, maxMs);
@@ -228,7 +317,7 @@ public final class ChunkloaderRegistry {
         c.setRemainingMs(newRemaining);
         save();
         history.logExtend(c, actuallyAdded, newRemaining, executor);
-        return new ExtendResult(true, actuallyAdded, newRemaining, capped);
+        return new ExtendResult(true, false, actuallyAdded, newRemaining, capped);
     }
 
     // ---------- tick ----------
@@ -261,6 +350,7 @@ public final class ChunkloaderRegistry {
                     if (tickCounter >= c.nextPlaceAttemptTick()) tryPlacePending(c);
                     continue;
                 }
+                if (c.permanent()) continue; // no timer, no warning, no expiry
                 c.decrementRemainingMs(TICK_INTERVAL_MS);
                 if (c.remainingMs() <= 0) {
                     (expired == null ? expired = new ArrayList<>() : expired).add(c);
@@ -296,8 +386,9 @@ public final class ChunkloaderRegistry {
     private void tryPlacePending(Chunkloader c) {
         PlaceFailure failure = placeLoader(c);
         if (failure == null) {
-            CRFP.LOGGER.info("Restored chunkloader '{}' in {} at {} ({} min left)",
-                    c.name(), c.dimension(), c.pos().toShortString(), c.remainingMs() / 60_000L);
+            CRFP.LOGGER.info("Restored chunkloader '{}' in {} at {} ({})",
+                    c.name(), c.dimension(), c.pos().toShortString(),
+                    c.permanent() ? "permanent" : c.remainingMs() / 60_000L + " min left");
             history.logRestore(c);
             c.resetPlaceAttempts();
             return;
@@ -355,6 +446,13 @@ public final class ChunkloaderRegistry {
         ServerLevel level = resolveLevel(c.dimension());
         if (level == null) {
             return new PlaceFailure("dimension '" + c.dimension() + "' does not exist on this server", null);
+        }
+        // A real player may have logged in under this name (or, in offline mode, this UUID) since the
+        // loader was created; placing the fake player now would give the server two of them. Stay
+        // pending and retry after they leave.
+        PlayerList players = server.getPlayerList();
+        if (players.getPlayer(c.uuid()) != null || players.getPlayerByName(c.name()) != null) {
+            return new PlaceFailure("a player named '" + c.name() + "' is online", null);
         }
         GameProfile profile = new GameProfile(c.uuid(), c.name());
         if (c.skinValue() != null) {

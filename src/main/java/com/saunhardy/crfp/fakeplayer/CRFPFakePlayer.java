@@ -2,11 +2,13 @@ package com.saunhardy.crfp.fakeplayer;
 
 import com.mojang.authlib.GameProfile;
 import com.saunhardy.crfp.CRFP;
+import com.saunhardy.crfp.Config;
 import com.saunhardy.crfp.core.ChunkloaderRegistry;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.CommonListenerCookie;
@@ -156,12 +158,18 @@ public final class CRFPFakePlayer extends FakePlayer {
         return false;
     }
 
+    /**
+     * Auto-named loaders ({@code Createrington_7}) show as {@code Createrington#7}; a custom name is
+     * shown as-is. The {@code [CRFP]} prefix is controlled by {@link Config#SHOW_TAB_LIST_PREFIX}.
+     */
     @Override
     public @Nullable Component getTabListDisplayName() {
-        int slot = ChunkloaderRegistry.slotOf(getGameProfile().getName());
-        String displayNumber = slot > 0 ? "#" + slot : getGameProfile().getName();
-        return Component.literal("[CRFP] ").withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal("Createrington" + displayNumber).withStyle(ChatFormatting.GRAY));
+        String name = getGameProfile().getName();
+        int slot = ChunkloaderRegistry.slotOf(name);
+        String shown = slot > 0 ? "Createrington#" + slot : name;
+        MutableComponent label = Component.literal(shown).withStyle(ChatFormatting.GRAY);
+        if (!Config.SHOW_TAB_LIST_PREFIX.get()) return label;
+        return Component.literal("[CRFP] ").withStyle(ChatFormatting.DARK_AQUA).append(label);
     }
 
     public void killSilently() {

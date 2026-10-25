@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -41,11 +42,14 @@ public final class CRFPCommands {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("crfp")
                 .requires(src -> src.hasPermission(Config.PERMISSION_LEVEL.get()));
 
+        // /crfp add [name] <minutes|permanent> [reason...]. <minutes> is registered before <name> so
+        // Brigadier prefers the duration when a word parses as both; the registry rejects digits-only names.
         root.then(Commands.literal("add")
-                .then(Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
-                        .executes(ctx -> doAdd(ctx, ""))
-                        .then(Commands.argument("reason", StringArgumentType.greedyString())
-                                .executes(ctx -> doAdd(ctx, StringArgumentType.getString(ctx, "reason"))))));
+                .then(durationBranch(false))
+                .then(permanentBranch(false))
+                .then(Commands.argument("name", StringArgumentType.word())
+                        .then(durationBranch(true))
+                        .then(permanentBranch(true))));
 
         root.then(Commands.literal("list")
                 .executes(CRFPCommands::doList));
@@ -74,6 +78,20 @@ public final class CRFPCommands {
         dispatcher.register(root);
     }
 
+    private static ArgumentBuilder<CommandSourceStack, ?> durationBranch(boolean named) {
+        return Commands.argument("minutes", IntegerArgumentType.integer(1, 1440))
+                .executes(ctx -> doAdd(ctx, named, false, ""))
+                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                        .executes(ctx -> doAdd(ctx, named, false, StringArgumentType.getString(ctx, "reason"))));
+    }
+
+    private static ArgumentBuilder<CommandSourceStack, ?> permanentBranch(boolean named) {
+        return Commands.literal("permanent")
+                .executes(ctx -> doAdd(ctx, named, true, ""))
+                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                        .executes(ctx -> doAdd(ctx, named, true, StringArgumentType.getString(ctx, "reason"))));
+    }
+
     private static Iterable<String> activeNames() {
         ChunkloaderRegistry r = CRFP.registry();
         if (r == null) return List.of();
@@ -88,21 +106,31 @@ public final class CRFPCommands {
 
     // ---------- add ----------
 
-    private static int doAdd(CommandContext<CommandSourceStack> ctx, String reason) throws CommandSyntaxException {
+    private static int doAdd(CommandContext<CommandSourceStack> ctx, boolean named, boolean permanent, String reason)
+            throws CommandSyntaxException {
         CommandSourceStack src = ctx.getSource();
         ServerPlayer player = src.getPlayer();
         if (player == null) throw ERR_NOT_PLAYER.create();
 
         ChunkloaderRegistry reg = requireRegistry();
-        int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
+        String name = named ? StringArgumentType.getString(ctx, "name") : null;
 
-        ChunkloaderRegistry.AddResult result = reg.add(minutes, reason, player);
+        ChunkloaderRegistry.AddResult result;
+        String activeFor;
+        if (permanent) {
+            result = reg.addPermanent(name, reason, player);
+            activeFor = "permanently (until /crfp remove)";
+        } else {
+            int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
+            result = reg.add(minutes, name, reason, player);
+            activeFor = "for " + minutes + "m";
+        }
         if (!result.success) {
             src.sendFailure(Component.literal(result.message));
             return 0;
         }
         Chunkloader c = result.chunkloader;
-        src.sendSuccess(() -> Component.literal("Chunkloader '" + c.name() + "' active for " + minutes + "m").withStyle(ChatFormatting.GREEN), true);
+        src.sendSuccess(() -> Component.literal("Chunkloader '" + c.name() + "' active " + activeFor).withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
 
@@ -130,7 +158,7 @@ public final class CRFPCommands {
                     .append(Component.literal(" · " + shortDim(c.dimension())
                             + " [" + p.getX() + " " + p.getY() + " " + p.getZ() + "]"
                             + " · by " + c.creatorName()
-                            + " · " + formatDuration(c.remainingMs()) + " left"
+                            + " · " + remainingText(c)
                             + reason).withStyle(ChatFormatting.GRAY));
             if (!c.isPlaced()) {
                 line.append(Component.literal(" · NOT PLACED (retrying, see log)").withStyle(ChatFormatting.RED));
@@ -162,6 +190,10 @@ public final class CRFPCommands {
 
         ChunkloaderRegistry.ExtendResult r = reg.extend(name, minutes, src.getTextName());
         if (!r.found()) throw ERR_NOT_FOUND.create();
+        if (r.permanent()) {
+            src.sendFailure(Component.literal("Chunkloader '" + name + "' is permanent and has no timer to extend"));
+            return 0;
+        }
 
         String addedStr = formatDuration(r.actuallyAddedMs());
         String remainStr = formatDuration(r.newRemainingMs());
@@ -189,7 +221,7 @@ public final class CRFPCommands {
         line(src, "Position",  p.getX() + " " + p.getY() + " " + p.getZ());
         line(src, "Reason",    c.reason().isEmpty() ? "(none)" : c.reason());
         line(src, "Created",   fmt.format(new Date(c.createdAtEpochMs())));
-        line(src, "Remaining", formatDuration(c.remainingMs()));
+        line(src, "Remaining", c.permanent() ? "permanent (never expires)" : formatDuration(c.remainingMs()));
         if (c.isPlaced()) {
             line(src, "Status", "active");
         } else {
@@ -202,6 +234,10 @@ public final class CRFPCommands {
     private static void line(CommandSourceStack src, String key, String value) {
         src.sendSuccess(() -> Component.literal("  " + key + ": ").withStyle(ChatFormatting.GRAY)
                 .append(Component.literal(value).withStyle(ChatFormatting.WHITE)), false);
+    }
+
+    private static String remainingText(Chunkloader c) {
+        return c.permanent() ? "permanent" : formatDuration(c.remainingMs()) + " left";
     }
 
     private static String shortDim(String dim) {
@@ -229,6 +265,7 @@ public final class CRFPCommands {
                 String creator = o.has("creator") ? o.get("creator").getAsString() : "?";
                 String reason = o.has("reason") ? " · " + o.get("reason").getAsString() : "";
                 String executor = o.has("executor") ? " by " + o.get("executor").getAsString() : "";
+                String permanent = o.has("permanent") && o.get("permanent").getAsBoolean() ? " · permanent" : "";
 
                 ChatFormatting eventColor = switch (event) {
                     case "create" -> ChatFormatting.GREEN;
@@ -241,7 +278,7 @@ public final class CRFPCommands {
                 MutableComponent line = Component.literal("  " + shortTs(ts) + " ").withStyle(ChatFormatting.DARK_GRAY)
                         .append(Component.literal(event).withStyle(eventColor))
                         .append(Component.literal(" " + name + " ").withStyle(ChatFormatting.AQUA))
-                        .append(Component.literal("by " + creator + executor + reason).withStyle(ChatFormatting.GRAY));
+                        .append(Component.literal("by " + creator + executor + permanent + reason).withStyle(ChatFormatting.GRAY));
                 src.sendSuccess(() -> line, false);
             } catch (Exception e) {
                 src.sendSuccess(() -> Component.literal("  (unparseable) " + raw).withStyle(ChatFormatting.DARK_RED), false);

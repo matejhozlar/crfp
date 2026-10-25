@@ -4,6 +4,7 @@
   "package": "com.saunhardy.crfp.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "GameProfileCacheAccessor",
     "PlayerListBroadcastMixin",
     "PlayerListPersistenceMixin",
     "ServerCommonSendMixin"
