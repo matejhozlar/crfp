@@ -42,15 +42,20 @@ public final class CRFPCommands {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("crfp")
                 .requires(src -> src.hasPermission(Config.PERMISSION_LEVEL.get()));
 
-        // /crfp add <minutes|permanent> [reason...]
-        // /crfp add named <name> <minutes|permanent> [reason...]
+        // /crfp add [name] <minutes|permanent> [reason...]
+        //
+        // The optional name sits beside <minutes> and 'permanent' as a third child. Brigadier tries
+        // only the literal when the first word is exactly 'permanent'; otherwise it tries every
+        // argument child in registration order and keeps the parse that consumed all input without
+        // errors, first registered winning a tie. <minutes> is therefore registered before <name>:
+        // "60 witch farm" is 60 minutes with a reason, never a loader called "60", and "Farm 60" can
+        // only be a name because "Farm" is not an integer.
         root.then(Commands.literal("add")
-                .then(Commands.literal("named")
-                        .then(Commands.argument("name", StringArgumentType.word())
-                                .then(durationBranch(true))
-                                .then(permanentBranch(true))))
                 .then(durationBranch(false))
-                .then(permanentBranch(false)));
+                .then(permanentBranch(false))
+                .then(Commands.argument("name", StringArgumentType.word())
+                        .then(durationBranch(true))
+                        .then(permanentBranch(true))));
 
         root.then(Commands.literal("list")
                 .executes(CRFPCommands::doList));
