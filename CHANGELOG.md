@@ -1,13 +1,6 @@
-## Version 1.0.1
+## Version 1.1.0
 
 ### Added
-- Added `restore` events to the audit log (`/crfp history`) recorded whenever a loader is placed back into the world after a server restart.
-- Added a `Status` line to `/crfp info` showing whether a loader's fake player is active or pending, and the reason for any failed placement attempts.
-
-### Fixed
-- Fixed loaders being permanently deleted after a restart if placement failed (for example because another mod's login handler threw an error). They are now kept in the save file and retried with increasing delay (5 s up to 60 s); affected loaders show as `NOT PLACED` in `/crfp list` and their countdown is paused until they are in the world.
-- Fixed fake players that were removed from the player list by another mod being counted as actively loading chunks. The affected loader now falls back to the pending state and is re-placed automatically.
-- Fixed crashes losing all countdown progress since the last command. Loader state is now autosaved every 30 seconds and flushed on server stop via `ServerStoppedEvent`.
-- Fixed a partial login failure leaving an unmanaged fake player standing in the world.
-- Fixed the renamed join announcement not being suppressed for fake players.
-- Fixed a throwing `PlayerLoggedOutEvent` handler or a version-mismatched mod being able to crash the server during chunk-loader tick, expiry, or shutdown.
+- Added permanent chunkloaders with `/crfp add permanent [reason...]`. They never expire, are restored after server restarts, and stay until removed with `/crfp remove`. They cannot be extended and show as permanent in list, info and history. Admins can disable them with the new `allowPermanentLoaders` server config option
+- Added custom names for chunkloaders with `/crfp add [name] <minutes|permanent> [reason...]`. Names must be 3 to 16 letters, digits or underscores, and cannot match an existing loader, a real player's name or the reserved `permanent` keyword. The name is used as the fake player's username and tab-list name
+- Added a `showTabListPrefix` server config option to toggle the `[CRFP]` prefix in the tab list
